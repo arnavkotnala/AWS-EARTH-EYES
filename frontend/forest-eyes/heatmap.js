@@ -377,7 +377,9 @@
     return enabled && (document.getElementById('tree-loss-mode')?.value === 'heatmap');
   }
 
+  // Globe tiles must be read pixel by pixel: load them from our own server (no CORS failures)
   function lossUrl(coords) {
+    if (location.protocol.startsWith('http')) return `/tiles/gfw-loss/${coords.z}/${coords.x}/${coords.y}.png`;
     return L.Util.template(heatLoss._url, coords);
   }
 

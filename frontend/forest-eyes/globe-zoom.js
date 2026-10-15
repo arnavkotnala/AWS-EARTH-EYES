@@ -154,6 +154,23 @@
     warmed = true;
     window.ForestGlobeTransition?.preload?.();
     window.ForestGlobeImagery?.preload?.();
+    // Build the globe and compile its shaders while the browser is idle, so the first 2D→3D
+    // switch does not stall (~1 s of one-time setup). The globe's render loop stays paused while
+    // it is hidden, so this costs nothing afterwards.
+    const idle = cb => (window.requestIdleCallback ? requestIdleCallback(cb, { timeout: 5000 }) : setTimeout(cb, 1000));
+    idle(() => {
+      if (inGlobe() || busy() || !threeReady()) return;
+      initGlobe();
+      window.ForestGlobeLayers?.refresh?.(); // starts preparing the tree-loss texture in the background
+      idle(() => {
+        try {
+          const g = typeof globeScene !== 'undefined' && globeScene;
+          if (g && !inGlobe()) g.renderer.compile(g.scene, g.camera);
+        } catch (err) {
+          console.warn('[globe-zoom] shader warm-up skipped:', err.message);
+        }
+      });
+    });
   }
   if (CONFIG.preloadOnStart) {
     window.addEventListener('load', () => setTimeout(() => {

@@ -50,6 +50,7 @@ const water = require('./water.js');
 const rivers = require('./rivers.js');
 const traceCache = new Map();
 const networkCache = new Map();
+const tileCache = new Map(); // GFW loss tiles forwarded for the 3D globe
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -254,6 +255,31 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(status, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: err.status || err instanceof SyntaxError ? err.message : 'Elevation data is unavailable right now. Try again.' }));
     }
+  }
+
+  // GFW tree-loss tiles from our own origin (/tiles/gfw-loss/z/x/y.png): the 3D globe has to read
+  // their pixels, which the GFW tile server does not always allow cross-site (CORS). Cached in memory.
+  const tileMatch = /^\/tiles\/gfw-loss\/(\d{1,2})\/(\d{1,5})\/(\d{1,5})\.png$/.exec(url.pathname);
+  if (tileMatch && req.method === 'GET') {
+    const [z, x, y] = tileMatch.slice(1).map(Number);
+    if (z > 12 || x >= 2 ** z || y >= 2 ** z) { res.writeHead(404); return res.end(); }
+    const key = `${z}/${x}/${y}`;
+    let tile = tileCache.get(key);
+    if (!tile) {
+      try {
+        const up = await fetch(`https://tiles.globalforestwatch.org/umd_tree_cover_loss/v1.11/tcd_30/${key}.png`, { signal: AbortSignal.timeout(15000) });
+        tile = up.ok ? { status: 200, body: Buffer.from(await up.arrayBuffer()) } : { status: up.status, body: null };
+      } catch {
+        tile = { status: 502, body: null };
+      }
+      if (tile.status === 200 || tile.status === 404) {
+        if (tileCache.size > 400) tileCache.delete(tileCache.keys().next().value);
+        tileCache.set(key, tile);
+      }
+    }
+    if (!tile.body) { res.writeHead(tile.status); return res.end(); }
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
+    return res.end(tile.body);
   }
 
   // River under the cursor, whole main stem (/api/v1/rivers/at?lat=&lon=&km=&min=) — for hover highlighting

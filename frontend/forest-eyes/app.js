@@ -272,6 +272,7 @@ if (globeToggle) globeToggle.addEventListener('change', (event) => {
     resumeGlobe();
   }
   window.ForestGlobeTransition?.onToggle(showGlobe); // [transition] animated 2D→3D wrap; no-op if globe-transition.js is missing
+  resumeGlobe(); // the wrap/unwrap animation is driven by the globe's render loop: make sure it runs
 });
 
 const $climatePlaceholder = $('climate-placeholder');
@@ -1162,11 +1163,12 @@ function initGlobe() {
     autoRotate: true,
   };
   bindGlobeControls();
-  // Render loop runs only while the globe is switched on and this app is on screen; otherwise it
-  // stops (it used to redraw 60×/s forever, even hidden) and resumeGlobe() restarts it.
+  // Render loop runs while the globe is on screen OR a 2D↔3D animation is playing (the wrap /
+  // unwrap animation advances inside this loop), and only while this app is visible. Otherwise
+  // it stops (it used to redraw 60×/s forever, even hidden) and resumeGlobe() restarts it.
   const animate = () => {
     if (!globeScene) return;
-    if (!globeToggle?.checked || appHidden) { globeScene.paused = true; return; }
+    if (!globeNeeded()) { globeScene.paused = true; return; }
     if (globeScene.autoRotate && !globeScene.isDragging) earth.rotation.y += 0.0015;
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
@@ -1175,8 +1177,12 @@ function initGlobe() {
   animate();
 }
 
+function globeNeeded() {
+  return !appHidden && (!!globeToggle?.checked || !!window.ForestGlobeTransition?.isRunning?.());
+}
+
 function resumeGlobe() {
-  if (globeScene?.paused && globeToggle?.checked && !appHidden) {
+  if (globeScene?.paused && globeNeeded()) {
     globeScene.paused = false;
     globeScene.animate();
   }

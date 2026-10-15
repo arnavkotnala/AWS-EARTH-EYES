@@ -86,12 +86,16 @@
         s += src[y * w + ((x + r + 1) % w)] - src[y * w + ((x - r + w) % w)];
       }
     }
-    for (let x = 0; x < w; x++) {
-      for (let y = 0; y < h; y++) {
-        let s = 0;
-        for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < h) s += tmp[yy * w + x]; }
-        dst[y * w + x] = s * norm;
-      }
+    // Vertical pass: running column sums, row by row (O(w·h), memory-friendly). Rows outside the
+    // image count as 0, exactly like the previous per-pixel loop.
+    const col = new Float32Array(w);
+    for (let y = 0; y <= Math.min(r, h - 1); y++) for (let x = 0; x < w; x++) col[x] += tmp[y * w + x];
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) dst[row + x] = col[x] * norm;
+      const add = y + r + 1, sub = y - r;
+      if (add < h) for (let x = 0; x < w; x++) col[x] += tmp[add * w + x];
+      if (sub >= 0) for (let x = 0; x < w; x++) col[x] -= tmp[sub * w + x];
     }
     return dst;
   }
@@ -153,6 +157,9 @@
   let loss = null; // { state: 'loading' | 'ready' | 'failed', dotTex, colourTex }
 
   function lossTileUrl(x, y, z) {
+    // The globe must READ the pixels, which GFW's tile server does not always allow cross-site
+    // (CORS). Our server forwards the same tiles from our own origin (backend: /tiles/gfw-loss).
+    if (location.protocol.startsWith('http')) return `/tiles/gfw-loss/${z}/${x}/${y}.png`;
     const tpl = (typeof treeLossLayer !== 'undefined' && treeLossLayer._url) ||
       'https://tiles.globalforestwatch.org/umd_tree_cover_loss/v1.11/tcd_30/{z}/{x}/{y}.png';
     return L.Util.template(tpl, { x, y, z, s: '', r: '' });
@@ -185,7 +192,8 @@
     for (let x = 0; x < n; x++) {
       for (let y = 0; y < n; y++) jobs.push(loadTile(lossTileUrl(x, y, z)).then(img => ({ x, y, img })));
     }
-    Promise.all(jobs).then(tiles => {
+    const pause = () => new Promise(r => setTimeout(r, 0)); // let the browser draw a frame
+    Promise.all(jobs).then(async tiles => {
       if (loss !== current) return;
       const ok = tiles.filter(t => t.img);
       if (!ok.length) {
@@ -210,10 +218,12 @@
         ectx.drawImage(merc, 0, Math.min(Math.floor(my), W - 1), W, 1, 0, j, W, 1);
       }
       try {
+        await pause();
         const data = ectx.getImageData(0, 0, W, H).data;
+        await pause();
         current.dotTex = makeDataTexture(bleedAndFlip(data, W, H), W, H);
-        const coloured = colourise(data, W, H, new Uint8ClampedArray(W * H * 4));
-        current.colourTex = makeDataTexture(bleedAndFlip(coloured, W, H), W, H);
+        // Colour form texture is built the first time Colour form is shown (see colourTexture())
+        current.raw = { data, W, H };
       } catch (err) {
         console.warn('[globe-layers] Could not read loss tiles; showing them unprocessed:', err.message);
         current.dotTex = makeTexture(eq);
@@ -221,6 +231,17 @@
       current.state = 'ready';
       refresh();
     });
+  }
+
+  /** Colour form texture, built on first use (it is the slowest step and Dot form never needs it). */
+  function colourTexture() {
+    if (!loss || loss.state !== 'ready') return null;
+    if (!loss.colourTex && loss.raw) {
+      const { data, W, H } = loss.raw;
+      const coloured = colourise(data, W, H, new Uint8ClampedArray(W * H * 4));
+      loss.colourTex = makeDataTexture(bleedAndFlip(coloured, W, H), W, H);
+    }
+    return loss.colourTex || null;
   }
 
   function makeDataTexture(data, w, h) {
@@ -346,7 +367,7 @@
 
     if (wantDots || (wantColour && CONFIG.colourGlobal)) ensureLoss();
     const ready = loss?.state === 'ready';
-    const tex = !ready ? null : wantDots ? loss.dotTex : wantColour && CONFIG.colourGlobal ? loss.colourTex || null : null;
+    const tex = !ready ? null : wantDots ? loss.dotTex : wantColour && CONFIG.colourGlobal ? colourTexture() : null;
     if (overlay.material.map !== tex) {
       overlay.material.map = tex;
       overlay.material.needsUpdate = true;
