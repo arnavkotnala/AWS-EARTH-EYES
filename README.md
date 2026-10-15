@@ -1,6 +1,6 @@
 # Earth Intelligence Platform
 
-**Forest Eyes** (deforestation) + **River Eyes** (rivers, floods, hydropower siting) + **Hazard Lens**
+**Forest Eyes** (deforestation) + **River Eyes** (rivers, water quality, hydropower siting) + **Hazard Lens**
 (Gemma 4 reads a satellite image together with live river, flood, terrain, rain, soil and forest data).
 
 ## Project structure
@@ -10,7 +10,7 @@ frontend/                 everything the browser loads (served as-is)
   index.html              shell: Forest ⇄ River switch, Hazard Lens toggle, transition animation
   transition.css/.js      the water / forest transition
   forest-eyes/            Forest Eyes app (map, 3D globe, Treeko assistant)
-  river-eyes/             River Eyes app (river network, site conditions, City Power Planner, River Dam Atlas)
+  river-eyes/             River Eyes app (river network, site conditions, water quality, City Power Planner, River Dam Atlas)
   hazard/                 Hazard Lens page
 backend/                  Node.js server, no npm packages needed (Node 22+)
   server.js               HTTP server: serves frontend/ and every /api route
@@ -18,6 +18,8 @@ backend/                  Node.js server, no npm packages needed (Node 22+)
   hazard.js               Hazard Lens: gathers data + satellite image, asks Gemma 4
   dam.js                  hydropower screening: one river, a whole river (atlas), or a city's demand
   rivers.js               HydroRIVERS network: nearest river, tracing, map layer
+  water-snap.js           centres close-up river lines on the real water (JRC Global Surface Water)
+  water.js                water quality (turbidity, chlorophyll) from Sentinel-2 images
   site.js                 site conditions: soil, earthquakes, river flow
   soil.js                 instant India soil lookups (SoilGrids grid)
   elevation.js            elevation from AWS Terrain Tiles
@@ -46,12 +48,13 @@ Open http://localhost:8080 — useful links: `#river` (opens River Eyes), `#lens
 | Variable | Needed for |
 |---|---|
 | `GEMINI_API_KEY` | Gemma 4 via Google AI Studio (Treeko, Aqua, Hazard Lens) |
-| `GFW_API_KEY` | Global Forest Watch tree-loss analysis in Forest Eyes |
+| `GFW_API_KEY` | Global Forest Watch tree-loss analysis in Forest Eyes (without it, Global Nature Watch is used) |
 | `BEDROCK_API_KEY`, `BEDROCK_MODEL_ID`, `BEDROCK_REGION` | optional: Gemma 4 on Amazon Bedrock, tried first |
 
 ## Data sources
 
 HydroRIVERS / HydroSHEDS (Lehner & Grill 2013) · GloFAS v4 via Open-Meteo · ISRIC SoilGrids 2.0 ·
+ESA Sentinel-2 (Microsoft Planetary Computer) · JRC Global Surface Water (Pekel et al. 2016) ·
 UMD / Hansen tree cover loss via Global Forest Watch / Global Nature Watch · USGS earthquake catalogue ·
 AWS Terrain Tiles · Esri World Imagery · Open-Meteo weather. Details and citations: `backend/datasets/README.md`.
 

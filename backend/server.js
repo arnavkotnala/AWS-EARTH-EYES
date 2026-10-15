@@ -85,6 +85,8 @@ function readBody(req, limit = 64 * 1024) {
 }
 
 function serveStatic(req, res) {
+  // No favicon file: answer "no content" instead of a 404 in every browser console
+  if (req.url === '/favicon.ico') { res.writeHead(204, { 'cache-control': 'public, max-age=86400' }); return res.end(); }
   let rel;
   try { rel = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { rel = '/'; }
   if (rel.endsWith('/')) rel += 'index.html';
@@ -100,19 +102,35 @@ function serveStatic(req, res) {
     res.writeHead(403); return res.end('Access denied');
   }
 
-  fs.readFile(file, (err, buf) => {
-    if (err) {
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) {
       res.writeHead(404, { 'content-type': 'text/plain' });
       return res.end('404 Not Found');
     }
     const ext = path.extname(file).toLowerCase();
-    res.writeHead(200, {
-      'content-type': MIME[ext] || 'application/octet-stream',
-      'cache-control': 'no-cache, no-store, must-revalidate'
+    // 'no-cache' = the browser keeps a copy but asks every time; unchanged files get a tiny 304.
+    // So a new deploy is always picked up, and repeat visits do not re-download everything.
+    const etag = `"${st.size.toString(36)}-${Math.round(st.mtimeMs).toString(36)}"`;
+    const headers = { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': 'no-cache', etag };
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); return res.end(); }
+    const cached = staticCache.get(file);
+    const send = entry => {
+      const gzip = entry.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      res.writeHead(200, { ...headers, ...(entry.gz ? { vary: 'Accept-Encoding' } : {}), ...(gzip ? { 'content-encoding': 'gzip' } : {}) });
+      res.end(gzip ? entry.gz : entry.raw);
+    };
+    if (cached && cached.etag === etag) return send(cached);
+    fs.readFile(file, (err2, raw) => {
+      if (err2) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('404 Not Found'); }
+      // Text files are gzipped once and kept (the whole frontend is ~1 MB, ~250 kB gzipped)
+      const entry = { etag, raw, gz: COMPRESSIBLE.has(ext) && raw.length > 1024 ? zlib.gzipSync(raw, { level: 9 }) : null };
+      staticCache.set(file, entry);
+      send(entry);
     });
-    res.end(buf);
   });
 }
+const staticCache = new Map(); // file → { etag, raw, gz }
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.csv', '.txt', '.md']);
 
 // Aqua for River Eyes — answers through the shared Gemma 4 client (gemma.js)
 async function handleAquaChat(body) {
@@ -373,8 +391,8 @@ const server = http.createServer(async (req, res) => {
       const okLine = l => Array.isArray(l) && l.length >= 2 && l.length <= 20000 && l.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
       if (!Array.isArray(lines) || !lines.length || lines.length > 20 || !lines.every(okLine)
         || !Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(Number.isFinite)
-        || bbox[2] - bbox[0] > 4 || bbox[3] - bbox[1] > 4 || !(zoom >= 9 && zoom <= 18)) {
-        throw Object.assign(new Error('lines (≤ 20), bbox (≤ 4°) and z ≥ 9 are required'), { status: 400 });
+        || bbox[2] - bbox[0] > 10 || bbox[3] - bbox[1] > 10 || !(zoom >= 9 && zoom <= 18)) {
+        throw Object.assign(new Error('lines (≤ 20), bbox (≤ 10°) and z ≥ 9 are required'), { status: 400 });
       }
       const net = { lines: { 5: lines } };
       await waterSnap.snapNetwork(net, zoom, bbox);

@@ -173,6 +173,7 @@
   - Where to plant: give 3-5 candidate sites in "sites", all within the analysis radius of the centre. Prefer degraded or recently cleared land, forest edges, riverbanks and slopes needing erosion control. Avoid water bodies, dense built-up areas, roads and protected core zones. Say in the answer that the sites are AI-suggested candidates to check on the satellite map and with landowners or the local forest department.
   - Use the deforestation figures above when relevant. Be honest when unsure.
   - Stay on topics related to trees, forests, soil, land, climate and this place; politely steer other questions back.
+  - In a conversation, answer only the newest question; do not repeat what you already said earlier.
   - Keep answers under about 180 words unless the user asks for detail. Friendly, clear, practical. Reply in the user's language.
   - "sites" must be an empty array unless the user asks where to plant (or for locations/coordinates).`;
   }
@@ -182,7 +183,7 @@
       .filter(m => m && typeof m.text === 'string' && m.text.trim())
       .slice(-LIMITS.maxMessages)
       .map(m => ({
-        role: m.role === 'treeko' ? 'model' : 'user',
+        role: ['treeko', 'model', 'assistant'].includes(m.role) ? 'model' : 'user',
         parts: [{ text: m.text.slice(0, LIMITS.maxMessageChars) }],
       }));
     while (contents.length && contents[0].role === 'model') contents.shift(); // must start with the user

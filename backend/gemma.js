@@ -16,6 +16,7 @@
 
 const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models/';
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const HEDGE_MS = Number(process.env.GEMMA_HEDGE_MS) || 15000; // start a 2nd Gemma attempt if the 1st is this slow
 
 const settings = () => ({
   geminiKey: (process.env.GEMINI_API_KEY || '').trim(),
@@ -44,8 +45,14 @@ function buildPlan(cfg) {
     plan.push(...Array(2).fill({ provider: 'bedrock', model: cfg.bedrockModel }));
   }
   if (cfg.geminiKey) {
-    cfg.gemmaModels.forEach((model, i) =>
-      plan.push(...Array(i === 0 ? cfg.attempts : 1).fill({ provider: 'gemini', model })));
+    // first model, then each other model once (so a hedged 2nd attempt uses a different model),
+    // then the first model's remaining attempts
+    const [first, ...others] = cfg.gemmaModels;
+    if (first) {
+      plan.push({ provider: 'gemini', model: first });
+      for (const model of others) plan.push({ provider: 'gemini', model });
+      plan.push(...Array(Math.max(0, cfg.attempts - 1)).fill({ provider: 'gemini', model: first }));
+    }
     for (const model of cfg.fallbacks) plan.push({ provider: 'gemini', model, fallback: true });
   }
   return plan;
@@ -73,40 +80,73 @@ async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl 
   if (!Array.isArray(contents) || !contents.length) throw httpError(400, 'Nothing to send to the model.');
 
   const turns = withSystem(contents, system, schema);
-  const fallbackAt = plan.findIndex(s => s.fallback);
   const deadline = Date.now() + cfg.budgetMs;
+  const gemmaSteps = plan.filter(s => !s.fallback);
+  const backups = plan.filter(s => s.fallback);
+  // Keep 30 s of the budget for the backup, if there is one.
+  const gemmaDeadline = deadline - (backups.length ? 30000 : 0);
+  const perAttemptMs = Math.max(timeoutMs || 0, cfg.timeoutMs);
+  const call = (step, ms, signal) => step.provider === 'bedrock'
+    ? callBedrock(step.model, turns, cfg, ms, fetchImpl, signal)
+    : callGemini(step.model, turns, schema, cfg.geminiKey, ms, fetchImpl, signal);
+  const answer = (step, text) => {
+    // The backup model is reported generically: the UI only names Gemma models.
+    const isGemma = step.model.startsWith('gemma');
+    return { text, model: isGemma ? step.model : 'backup model', provider: step.provider === 'gemini' ? 'google-ai-studio' : step.provider, gemma: isGemma };
+  };
   let lastErr;
 
-  for (let i = 0; i < plan.length; i++) {
-    const step = plan[i];
-    // Keep 30 s of the budget for the Gemini backup, if there is one.
-    const reserve = fallbackAt > i ? 30000 : 0;
-    const remaining = deadline - Date.now() - reserve;
-    if (remaining < 5000) {
-      if (fallbackAt > i) { i = fallbackAt - 1; continue; }
-      break;
-    }
-    // Gemma attempts are capped; the backup gets all the time that is left.
-    const perAttempt = step.fallback ? Math.min(remaining, 20000) : Math.min(Math.max(timeoutMs || 0, cfg.timeoutMs), remaining);
+  // 1. Gemma 4, hedged: Gemma on the free API sometimes hangs, so if an attempt has not answered
+  //    after HEDGE_MS a second one starts next to it (at most 2 at once); the first good answer
+  //    wins and the other is cancelled. A failure starts the next attempt straight away.
+  if (gemmaSteps.length) {
+    const result = await new Promise(resolve => {
+      const running = new Set();
+      const dead = new Set(); // models that failed for good (missing, bad request…)
+      let next = 0, done = false, hedgeTimer = null;
+      const finish = value => {
+        if (done) return;
+        done = true;
+        clearTimeout(hedgeTimer);
+        for (const c of running) c.abort();
+        resolve(value);
+      };
+      const launch = () => {
+        if (done) return;
+        while (next < gemmaSteps.length && dead.has(gemmaSteps[next].model)) next++;
+        const left = gemmaDeadline - Date.now();
+        if (next >= gemmaSteps.length || left < 5000) { if (!running.size) finish(null); return; }
+        const step = gemmaSteps[next++];
+        const ctl = new AbortController();
+        running.add(ctl);
+        clearTimeout(hedgeTimer);
+        hedgeTimer = setTimeout(() => { if (running.size < 2) launch(); }, HEDGE_MS);
+        call(step, Math.min(perAttemptMs, left), ctl.signal).then(
+          text => { running.delete(ctl); finish(answer(step, text)); },
+          err => {
+            running.delete(ctl);
+            if (done) return;
+            lastErr = err;
+            const retryable = RETRYABLE.has(err.upstreamStatus) || err.retry || err.name === 'TimeoutError' || err.name === 'AbortError';
+            console.warn(`[gemma] ${step.provider}:${step.model} failed (${err.upstreamStatus || err.name}: ${String(err.message).slice(0, 120)})`);
+            if (!retryable) dead.add(step.model);
+            setTimeout(launch, 300);
+          });
+      };
+      launch();
+    });
+    if (result) return result;
+  }
+
+  // 2. Backup models, one after another, with whatever time is left
+  for (const step of backups) {
+    const left = deadline - Date.now();
+    if (left < 5000) break;
     try {
-      const text = step.provider === 'bedrock'
-        ? await callBedrock(step.model, turns, cfg, perAttempt, fetchImpl)
-        : await callGemini(step.model, turns, schema, cfg.geminiKey, perAttempt, fetchImpl);
-      // The backup model is reported generically: the UI only names Gemma models.
-      const isGemma = step.model.startsWith('gemma');
-      return { text, model: isGemma ? step.model : 'backup model', provider: step.provider === 'gemini' ? 'google-ai-studio' : step.provider, gemma: isGemma };
+      return answer(step, await call(step, Math.min(left, 20000)));
     } catch (err) {
       lastErr = err;
-      const retryable = RETRYABLE.has(err.upstreamStatus) || err.retry ||
-        err.name === 'TimeoutError' || err.name === 'AbortError';
       console.warn(`[gemma] ${step.provider}:${step.model} failed (${err.upstreamStatus || err.name}: ${String(err.message).slice(0, 120)})`);
-      // A non-retryable failure (model missing, bad request, refused…) skips the remaining attempts
-      // of this model family and goes to the next provider, or else straight to the Gemini backup.
-      if (!retryable) {
-        const next = plan.findIndex((s, j) => j > i && (s.provider !== step.provider || s.fallback));
-        if (next < 0) break;
-        i = next - 1;
-      }
       await sleep(300);
     }
   }
@@ -127,7 +167,12 @@ function withSystem(contents, system, schema) {
   return [{ ...first, parts: [{ text: `${header}\n\n---\n\n` }, ...first.parts] }, ...rest];
 }
 
-async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl) {
+/** Aborts on the caller's signal or after ms, whichever comes first. */
+function timeoutSignal(ms, signal) {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
+}
+
+async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl, signal) {
   const body = { contents };
   // GEMMA_JSON_MODE=prompt: ask for JSON in the prompt only (no constrained decoding).
   if (schema && process.env.GEMMA_JSON_MODE !== 'prompt') {
@@ -141,7 +186,7 @@ async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl)
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: timeoutSignal(timeoutMs, signal),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `HTTP ${res.status}`), { upstreamStatus: res.status });
@@ -158,7 +203,7 @@ async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl)
 }
 
 /** Amazon Bedrock Converse API with a Bedrock API key (bearer token) — no AWS SDK needed. */
-async function callBedrock(modelId, contents, cfg, timeoutMs, fetchImpl) {
+async function callBedrock(modelId, contents, cfg, timeoutMs, fetchImpl, signal) {
   const messages = contents.map(c => ({
     role: c.role === 'model' ? 'assistant' : 'user',
     content: c.parts.map(p => p.inline_data
@@ -170,7 +215,7 @@ async function callBedrock(modelId, contents, cfg, timeoutMs, fetchImpl) {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.bedrockKey}` },
     body: JSON.stringify({ messages, inferenceConfig: { maxTokens: 2048, temperature: 0.4 } }),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: timeoutSignal(timeoutMs, signal),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data?.message || `HTTP ${res.status}`), { upstreamStatus: res.status });

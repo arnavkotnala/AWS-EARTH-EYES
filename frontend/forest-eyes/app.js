@@ -215,7 +215,7 @@ if ($treeLossMode) $treeLossMode.addEventListener('change', syncTreeLossLayer);
 // DATA SOURCE TOGGLE
 // =============================================
 function getDataSourceMode() {
-  return $toggleRealApi?.checked ? 'real' : 'simulate';
+  return 'real'; // live GFW / Global Nature Watch data only; there is no simulated mode
 }
 
 function updateDataSourceHint() {
@@ -476,6 +476,8 @@ async function analyzeLocation(lat, lng) {
       // ——— REAL API MODE ———
       setStep(1);
       try {
+        // Without a GFW key on the server GFW refuses the query, so go straight to Global Nature Watch
+        if (!(await gfwKeyConfigured())) throw new Error('no GFW key on the server');
         console.log('[API] Mode: REAL API — Strategy 1: GFW Data API');
         const geostoreId = await createGeostore(geojson);
         console.log('[API] Geostore created:', geostoreId);
@@ -494,14 +496,6 @@ async function analyzeLocation(lat, lng) {
           throw new Error('The live forest data services (GFW and Global Nature Watch) did not answer. Please try again in a minute.');
         }
       }
-    } else {
-      // ——— SIMULATE MODE (pure, from-scratch, no API data) ———
-      setStep(1);
-      console.log('[SIM] Mode: SIMULATE — generating fresh biome estimate');
-      await delay(600);
-      setStep(2);
-      analyticsData = simulateAnalyticsData(lat, lng);
-      await delay(400);
     }
 
     // STEP 3 — Format & store into the correct cache
@@ -591,6 +585,18 @@ function drawPolygon(geojson) {
 // API 1: GFW DATA API — Geostore + Dataset Query
 // (from services/geostore.js — saveGeostore)
 // =============================================
+let gfwKeyCheck = null;
+/** Asks our server once whether it has a GFW key (it never sends the key itself). */
+function gfwKeyConfigured() {
+  if (!gfwKeyCheck) {
+    gfwKeyCheck = fetch(`${API_BASE}/api/health`)
+      .then(r => (r.ok ? r.json() : {}))
+      .then(h => h.gfwKeyConfigured !== false)
+      .catch(() => true); // unknown: just try GFW
+  }
+  return gfwKeyCheck;
+}
+
 async function createGeostore(geojson) {
   // [aws] via our backend, which adds the GFW key (was: ${APIS.GFW_API}/geostore/ with the key in the browser)
   const res = await fetch(`${API_BASE}/api/gfw/geostore`, {
@@ -682,77 +688,6 @@ async function pollGNWAnalyticsJob(resourceId) {
     waited += retryAfter;
   }
   throw new Error('GNW analytics job timed out');
-}
-
-// =============================================
-// SIMULATED ESTIMATE — Pure Function
-// Generates from scratch every call.
-// Never reads, merges, or references API data.
-//
-// Constraints:
-//   • Latitude-based biome baseline (tropical → boreal)
-//   • Bounded year-over-year variance: ±30 %
-//   • CO₂ keyed to area via a biome-specific
-//     emission factor (Mg CO₂e per ha)
-// =============================================
-function simulateAnalyticsData(lat, lng) {
-  const absLat = Math.abs(lat);
-
-  // 1. Biome-specific baseline (ha/yr) and emission factor
-  let baseLoss, emissionFactor;
-  if (absLat < 10) {
-    // Equatorial rainforest belt
-    baseLoss       = 80 + Math.random() * 120;  // 80 – 200 ha
-    emissionFactor = 350 + Math.random() * 100;  // dense biomass
-  } else if (absLat < 23.5) {
-    // Tropical / subtropical
-    baseLoss       = 30 + Math.random() * 70;   // 30 – 100 ha
-    emissionFactor = 280 + Math.random() * 80;
-  } else if (absLat < 35) {
-    // Warm temperate / Mediterranean
-    baseLoss       = 8 + Math.random() * 30;    // 8 – 38 ha
-    emissionFactor = 200 + Math.random() * 60;
-  } else if (absLat < 55) {
-    // Cool temperate / mixed forest
-    baseLoss       = 2 + Math.random() * 15;    // 2 – 17 ha
-    emissionFactor = 150 + Math.random() * 50;
-  } else {
-    // Boreal / tundra
-    baseLoss       = 0.1 + Math.random() * 3;   // 0.1 – 3.1 ha
-    emissionFactor = 80 + Math.random() * 40;
-  }
-
-  // 2. Generate 10 years with bounded ±30 % YoY variance
-  const startYear = 2015;
-  const numYears  = 10;
-  const years     = [];
-  const areaHa    = [];
-  const emissions = [];
-
-  let prevLoss = baseLoss;
-  for (let i = 0; i < numYears; i++) {
-    // Random change within [-0.30, +0.30] of previous year
-    const change = (Math.random() * 0.6) - 0.3;          // –30 % … +30 %
-    let   loss   = prevLoss * (1 + change);
-    loss = Math.max(loss, 0.01);                          // floor to avoid negatives
-    loss = parseFloat(loss.toFixed(2));
-
-    const co2  = parseFloat((loss * emissionFactor).toFixed(2));
-
-    years.push(startYear + i);
-    areaHa.push(loss);
-    emissions.push(co2);
-
-    prevLoss = loss;
-  }
-
-  return {
-    result: {
-      tree_cover_loss_year:    years,
-      area_ha:                 areaHa,
-      carbon_emissions_MgCO2e: emissions,
-    },
-  };
 }
 
 // =============================================

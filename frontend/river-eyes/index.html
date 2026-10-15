@@ -1361,7 +1361,7 @@
       map.on('mousemove', onPickMove);
       document.addEventListener('keydown', e => { if (e.key === 'Escape' && pickMode) setPickMode(false); });
 
-      // Click on map to set Target Location for Dam Planner
+      // Click on the map: choose the site for Site Conditions and Water Quality
       map.on('click', function(e) {
         if (pickMode) { onPickClick(); return; }
         loadSiteConditions(e.latlng.lat, e.latlng.lng, `Clicked site (${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)})`);
@@ -1671,7 +1671,7 @@
     function showWaterSelection() {
       const el = document.getElementById('water-selected');
       if (el) el.innerHTML = selectedSite
-        ? `📍 <b>${escapeHtml(selectedSite.label)}</b> (${selectedSite.lat.toFixed(3)}, ${selectedSite.lon.toFixed(3)})<br/><span style="color:var(--text-dim)">Click any river or lake on the map to choose another place.</span>`
+        ? `📍 <b>${escapeHtml(selectedSite.label)}</b>${/-?\d+\.\d+,\s*-?\d+\.\d+/.test(selectedSite.label) ? '' : ` (${selectedSite.lat.toFixed(3)}, ${selectedSite.lon.toFixed(3)})`}<br/><span style="color:var(--text-dim)">Click any river or lake on the map to choose another place.</span>`
         : 'Click a river or lake on the map first.';
     }
 
@@ -2115,123 +2115,13 @@
     }
 
     // =========================================================================
-    // REAL HYDROPOWER SITE SCREENING — server: /api/v1/dam/screen (dam.js)
+    // HYDROPOWER SITES — map layer shared by the planner and the river atlas (server: dam.js)
     // Sites are computed along the real river (HydroRIVERS) from DEM heads and modelled flow.
     // =========================================================================
     let damLayer = null;
 
-    async function triggerCinematicAnalysis() {
-      const mw = parseInt(document.getElementById('mw-slider').value, 10);
-      const locName = document.getElementById('target-location-name').value;
-      const lat = parseFloat(document.getElementById('target-lat').value);
-      const lon = parseFloat(document.getElementById('target-lon').value);
-      const steps = [
-        'Snapping to the nearest major river (HydroRIVERS, HydroSHEDS)…',
-        'Following ~120 km of the main channel up- and downstream…',
-        'Sampling river-bed and valley-wall elevations…',
-        'Computing head, flow and power for every ~6 km diversion…',
-        'Ranking sites and choosing non-overlapping schemes…',
-      ];
-      const { data, error } = await withAnalyser(`${mw} MW (${locName})`, steps, () =>
-        fetch('/api/v1/dam/screen', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lon, targetMw: mw }),
-        }));
-      renderDamScreening(data, error, locName, mw);
-    }
-
     function escapeHtml(v) {
       return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
-
-    function renderDamScreening(r, error, locName, mw) {
-      document.getElementById('dam-planner-panel').style.display = 'flex';
-      document.getElementById('dam-panel-title').textContent = 'River Screening';
-      const resultsDiv = document.getElementById('dam-plan-results');
-      resultsDiv.style.display = 'block';
-      if (damLayer) { map.removeLayer(damLayer); damLayer = null; }
-      damMarkers = [];
-
-      if (error) {
-        resultsDiv.innerHTML = `<div style="border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.08);border-radius:8px;padding:10px;font-size:12px;color:#fca5a5;">${escapeHtml(error)}</div>`;
-        return;
-      }
-
-      damLayer = L.layerGroup().addTo(map);
-      L.polyline(r.channel, { color: '#22d3ee', weight: 3, opacity: 0.8, dashArray: '6 6' })
-        .bindTooltip('Screened river stretch (HydroRIVERS)').addTo(damLayer);
-
-      const listHtml = items => `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--text-muted);">${items.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
-      const footer = `
-        <details style="margin-top:10px;font-size:11px;color:var(--text-muted);">
-          <summary style="cursor:pointer;color:#fbbf24;">⚠ Not evaluated in this screening (${r.notEvaluated.length})</summary>${listHtml(r.notEvaluated)}
-        </details>
-        <details style="margin-top:6px;font-size:11px;color:var(--text-muted);">
-          <summary style="cursor:pointer;">Method &amp; assumptions</summary>${listHtml(r.assumptions)}
-        </details>
-        <div style="margin-top:6px;font-size:10px;color:var(--text-dim);">${(r.sources || []).map(escapeHtml).join(' · ')}</div>`;
-
-      if (!r.ok) {
-        map.fitBounds(L.polyline(r.channel).getBounds(), { padding: [30, 30] });
-        resultsDiv.innerHTML = `<div style="border-top:1px solid var(--border-subtle);padding-top:12px;">
-          <div style="background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:10px;font-size:12px;color:#fde68a;">${escapeHtml(r.reason)}</div>${footer}</div>`;
-        return;
-      }
-
-      r.sites.forEach(d => {
-        // diversion follows the river; the weir is a line across the valley
-        L.polyline(d.route || [d.intake, d.powerhouse], { color: '#38bdf8', weight: 5, opacity: 0.9 })
-          .bindTooltip(`Site ${d.rank}: ${d.diversionKm} km diversion`).addTo(damLayer);
-        if (d.weirAxis) {
-          L.polyline(d.weirAxis, { color: '#f43f5e', weight: 6, opacity: 1 })
-            .bindTooltip(`Site ${d.rank} weir · crest ≈ ${d.weirCrestM} m`).addTo(damLayer);
-        }
-        const popup = `<div style="font-size:12px;color:#0f172a;"><strong style="color:#0284c7;">⚡ Site ${d.rank}: ${d.mw} MW</strong><br/>
-          Head ${d.headM} m over ${d.diversionKm} km · Q ${d.flowCms} m³/s<br/>Weir crest ≈ ${d.weirCrestM} m (${d.weirHeightM} m high) · Bed ${d.riverBedElevationM} m a.s.l.<br/>Weir at ${d.intake[0].toFixed(5)}, ${d.intake[1].toFixed(5)}</div>`;
-        const intake = L.circleMarker(d.intake, { radius: 8, fillColor: '#38bdf8', color: '#fff', weight: 2, fillOpacity: 1 })
-          .bindPopup(popup).bindTooltip(`Site ${d.rank} intake (weir)`).addTo(damLayer);
-        L.circleMarker(d.powerhouse, { radius: 6, fillColor: '#10b981', color: '#fff', weight: 2, fillOpacity: 1 })
-          .bindPopup(popup).bindTooltip(`Site ${d.rank} powerhouse`).addTo(damLayer);
-        damMarkers.push(intake);
-      });
-      map.fitBounds(L.polyline(r.channel).getBounds(), { padding: [30, 30] });
-
-      const cardsHtml = r.sites.map(d => `
-        <div class="dam-site-card" style="background: var(--bg-deep); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 10px; margin-top: 8px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong style="color: #38bdf8; font-size: 12px;">Site ${d.rank} · score ${d.score}/100</strong>
-            <span style="font-family: var(--font-mono); font-size: 11px; background: rgba(56, 189, 248, 0.2); padding: 2px 6px; border-radius: 4px; color: #ffffff;">${d.mw} MW</span>
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-            Head <b>${d.headM} m</b> over <b>${d.diversionKm} km</b> (${d.gradientMPerKm} m/km) · Mean flow <b>${d.flowCms} m³/s</b>
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-            Weir crest <b>≈ ${d.weirCrestM} m</b> (${d.weirHeightM} m high) · River bed <b>${d.riverBedElevationM} m</b> a.s.l. · Catchment ${d.upstreamAreaKm2.toLocaleString()} km²
-          </div>
-          <div style="font-size: 10px; color: var(--text-dim); margin-top: 2px; font-family: var(--font-mono);">
-            Weir ${d.intake[0].toFixed(5)}, ${d.intake[1].toFixed(5)} → powerhouse ${d.powerhouse[0].toFixed(5)}, ${d.powerhouse[1].toFixed(5)}
-          </div>
-          <div style="display:flex;gap:6px;margin-top:6px;">
-            <button class="btn" style="flex:1;justify-content:center;font-size:10px;padding:4px;" onclick="showSatellite(); map.flyTo([${d.intake[0]}, ${d.intake[1]}], 15)">📍 Inspect on satellite</button>
-            <button class="btn" style="flex:1;justify-content:center;font-size:10px;padding:4px;" onclick="reviewSiteWithGemma(this, ${d.intake[0]}, ${d.intake[1]}, ${d.rank})">✦ Gemma 4 site review</button>
-          </div>
-          <div class="gemma-review" style="font-size:11px;margin-top:6px;"></div>
-        </div>`).join('');
-
-      resultsDiv.innerHTML = `
-        <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
-          <div style="background: ${r.meetsTarget ? 'rgba(16, 185, 129, 0.15)' : 'rgba(251,191,36,.1)'}; border: 1px solid ${r.meetsTarget ? 'rgba(16, 185, 129, 0.4)' : 'rgba(251,191,36,.4)'}; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
-            <div style="font-size: 11px; font-weight: 700; color: ${r.meetsTarget ? '#34d399' : '#fbbf24'}; text-transform: uppercase;">Screening result · ${escapeHtml(locName)}</div>
-            <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;">${r.sites.length} run-of-river site${r.sites.length > 1 ? 's' : ''}: ${r.achievedMw} MW of ${mw} MW target</div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-              ≈ <b>${r.annualGWh.toLocaleString()} GWh/yr</b> at a 50 % capacity factor · ${r.candidatesEvaluated} candidate stretches evaluated
-              ${r.meetsTarget ? '' : '<br/>This stretch of river cannot reach the target with non-overlapping schemes.'}
-            </div>
-          </div>
-          <strong style="font-size: 11px; color: var(--text-dim); text-transform: uppercase;">Shortlisted sites (upstream → downstream)</strong>
-          ${cardsHtml}
-          ${footer}
-        </div>`;
     }
 
     // Gemma 4 reviews a candidate site: satellite image + terrain/flood/rain data (Hazard Lens API)
