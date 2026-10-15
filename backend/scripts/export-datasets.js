@@ -93,7 +93,7 @@ async function earthquakes(p) {
   console.log('HydroRIVERS reaches within 50 km of each place…');
   const riverRows = [];
   for (const p of PLACES) {
-    for (const i of rivers.within(p.lat, p.lon, 50)) {
+    for (const i of rivers.within(p.lat, p.lon, 50, rivers.MAJOR_KM2)) {
       const d = rivers.load();
       riverRows.push([p.id, d.id[i], d.next[i], d.main[i], d.order[i], d.lengthKm[i].toFixed(2), d.distDnKm[i].toFixed(1),
         Math.round(d.uplandKm2[i]), d.dischargeCms[i].toFixed(2), (d.y0[i] / 1e5).toFixed(5), (d.x0[i] / 1e5).toFixed(5), (d.y1[i] / 1e5).toFixed(5), (d.x1[i] / 1e5).toFixed(5)]);
@@ -156,7 +156,7 @@ The live app queries the same sources on demand for any place on Earth; these fi
 
 | File | Rows | Source | Licence / terms |
 |---|---|---|---|
-| \`hydrorivers_reaches_demo.csv\` | ${counts.rivers} | HydroRIVERS v1.0 (HydroSHEDS): river reaches within 50 km, catchment >= 1000 km2. Full global network (905,279 reaches) is in \`data/hydrorivers.bin\`, built by \`scripts/build-rivers.py\`. | HydroSHEDS licence, attribution required |
+| \`hydrorivers_reaches_demo.csv\` | ${counts.rivers} | HydroRIVERS v1.0 (HydroSHEDS): river reaches within 50 km (catchment >= 1000 km2; >= 100 km2 in the India region). The full network (998,251 reaches: 905,279 worldwide + 92,972 extra in the India region) is in \`data/hydrorivers.bin\` + \`data/hydrorivers_geom.bin\`, built by \`scripts/build-rivers.py\`. India soil grid: \`data/soil_india.bin\` (\`scripts/build-soil-india.py\`). | HydroSHEDS licence, attribution required |
 | \`tree_cover_loss_demo.csv\` | ${counts.forest ?? 'n/a'} | Tree cover loss 2021-2024, natural forest, ${FOREST_RADIUS_KM} km box (UMD / Hansen et al., via Global Nature Watch analytics API) | CC BY 4.0 |
 | \`river_discharge_glofas_demo.csv\` | ${counts.flow} | GloFAS v4 daily river discharge (Copernicus Emergency Management Service) via Open-Meteo Flood API | CC BY 4.0 |
 | \`earthquakes_usgs_demo.csv\` | ${counts.quakes} | USGS ComCat earthquakes M5+ within 150 km since 1970 | Public domain |

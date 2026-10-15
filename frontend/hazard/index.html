@@ -210,7 +210,9 @@
     });
 
     // The API lives in our Node server: opening this file directly (file://, Live Server…) can't reach it.
-    const SERVER_HINT = 'The Hazard Lens needs the project server. In the "maha sangram" folder run <code>node server.js</code>, then open <a href="http://localhost:8080/" target="_top">http://localhost:8080</a>.';
+    const SERVER_HINT = location.protocol === 'file:'
+      ? 'The Hazard Lens needs the project server: in the project folder run <code>npm start</code>, then open <a href="http://localhost:8080/" target="_top">http://localhost:8080</a>.'
+      : 'The server did not answer. Wait a moment and try again (a sleeping free server can take about a minute to wake up).';
     if (location.protocol === 'file:') {
       out.innerHTML = `<div class="card err">⚠️ This page was opened as a file. ${SERVER_HINT}</div>`;
     }

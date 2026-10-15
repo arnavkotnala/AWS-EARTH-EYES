@@ -1534,7 +1534,7 @@
       } catch (err) {
         if (id !== siteRequest) return;
         ['hud-health', 'hud-bearing', 'hud-seismic'].forEach(k => { document.getElementById(k).textContent = 'n/a'; });
-        body.innerHTML = `<div style="color:#fca5a5;font-size:12px;">Site data unavailable: ${escapeHtml(err.message)}. Is node server.js running?</div>`;
+        body.innerHTML = `<div style="color:#fca5a5;font-size:12px;">Site data unavailable: ${escapeHtml(err.message)}. Try again in a moment.</div>`;
         return;
       }
       if (id !== siteRequest) return; // a newer click won

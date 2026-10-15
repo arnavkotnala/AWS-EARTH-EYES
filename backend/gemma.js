@@ -68,7 +68,7 @@ function describe() {
 async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl = fetch) {
   const cfg = settings();
   const plan = buildPlan(cfg);
-  if (!plan.length) throw httpError(503, 'AI is not set up: add GEMINI_API_KEY (or a Bedrock key) to the server .env.');
+  if (!plan.length) throw httpError(503, 'AI is not set up: add GEMINI_API_KEY (or a Bedrock key) to the server settings.');
   if (!Array.isArray(contents) || !contents.length) throw httpError(400, 'Nothing to send to the model.');
 
   const turns = withSystem(contents, system, schema);
@@ -108,7 +108,7 @@ async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl 
     }
   }
   const s = lastErr?.upstreamStatus;
-  if (s === 401 || s === 403) throw httpError(502, 'The AI key was rejected. Check the keys in the server .env.');
+  if (s === 401 || s === 403) throw httpError(502, 'The AI key was rejected. Check the keys in the server settings.');
   if (s === 429) throw httpError(502, 'Too many AI requests right now (rate limit). Try again in a minute.');
   throw httpError(502, 'Gemma 4 could not answer right now. Please try again.');
 }
