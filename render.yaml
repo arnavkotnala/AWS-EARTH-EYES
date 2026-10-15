@@ -6,7 +6,7 @@ services:
     runtime: node
     plan: free
     buildCommand: "true"
-    startCommand: node server.js
+    startCommand: node backend/server.js
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_VERSION

@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "Forest Eyes + River Eyes + Hazard Lens: global environmental hazard screening with Gemma 4",
-  "main": "server.js",
+  "main": "backend/server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node backend/server.js",
+    "export-datasets": "node backend/scripts/export-datasets.js"
   },
   "engines": {
     "node": ">=22"

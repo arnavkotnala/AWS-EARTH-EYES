@@ -38,14 +38,8 @@ const GFW = {
 // ---------------------------------------------------------------------------
 // Treeko — shared brain (treeko-brain.js) with the server's key and timeouts
 // ---------------------------------------------------------------------------
-const brain = (() => {
-  try {
-    return require('../treeko-brain.js');            // project folder (server.js)
-  } catch (err) {
-    if (err.code !== 'MODULE_NOT_FOUND') throw err;
-    return require('./treeko-brain.js');             // Lambda package (files side by side)
-  }
-})();
+// treeko-brain.js is shared with the browser, so it lives with the frontend
+const brain = require('../frontend/forest-eyes/treeko-brain.js');
 const { summariseSoil, checkSites, systemPrompt, toContents, haversineKm, soilCache } = brain;
 
 // Optional shared model client (the Earth Intelligence server plugs in Gemma 4 here).

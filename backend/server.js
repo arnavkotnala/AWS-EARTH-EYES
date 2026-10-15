@@ -1,8 +1,8 @@
 /**
  * Earth Intelligence Platform — Unified Master Server (server.js)
  * ===============================================================
- * Combines Forest Eyes and River Eyes APIs and serves the unified web application.
- * Run: node server.js
+ * Serves the web app in ../frontend and the APIs of Forest Eyes, River Eyes and the Hazard Lens.
+ * Run (from the project root): npm start   — or: node backend/server.js
  * Open: http://localhost:8080
  */
 'use strict';
@@ -12,10 +12,12 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const ROOT = __dirname;
+const ROOT = path.join(__dirname, '..');            // project root
+const FRONTEND = path.join(ROOT, 'frontend');       // the only folder served to browsers
 
-// One shared .env at the project root holds the keys for both Forest Eyes and River Eyes.
+// Keys live in .env at the project root (or backend/.env); on a host, in its environment settings.
 loadDotEnv(path.join(ROOT, '.env'));
+loadDotEnv(path.join(__dirname, '.env'));
 
 function loadDotEnv(file) {
   let text;
@@ -33,7 +35,7 @@ const PORT = Number(process.env.PORT) || 8080;
 // Load Forest Eyes core API
 let forestCore = null;
 try {
-  forestCore = require('./forest-eyes-final/api/core.js');
+  forestCore = require('./forest-api.js');
 } catch (err) {
   console.warn('Forest Eyes core API load note:', err.message);
 }
@@ -84,15 +86,14 @@ function serveStatic(req, res) {
   try { rel = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { rel = '/'; }
   if (rel.endsWith('/')) rel += 'index.html';
 
-  // Only the web app is public. Never serve secrets, tooling or raw data (.env, .git, data/, HydroRIVERS…).
-  const PUBLIC = /^\/(index\.html|transition\.(css|js)|forest-eyes-final\/(?!api\/|scripts\/)[^]*|river-eyes\/[^]*|hazard\/[^]*)$/;
-  if (!PUBLIC.test(rel) || rel.split(/[\\/]/).some(seg => seg.startsWith('.') || seg === 'node_modules')) {
+  // Only frontend/ is public, and never hidden files (.env, .git…).
+  if (rel.split(/[\\/]/).some(seg => seg.startsWith('.') || seg === 'node_modules')) {
     res.writeHead(404, { 'content-type': 'text/plain' });
     return res.end('404 Not Found');
   }
-  const file = path.normalize(path.join(ROOT, rel));
+  const file = path.normalize(path.join(FRONTEND, rel));
 
-  if (!file.startsWith(ROOT + path.sep) && file !== ROOT) {
+  if (!file.startsWith(FRONTEND + path.sep)) {
     res.writeHead(403); return res.end('Access denied');
   }
 
@@ -299,7 +300,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'Valid lat and lon are required.' }));
     }
     // A full SoilGrids profile often takes 20+ s, so allow longer than Treeko's 5 s budget.
-    const soil = await require('./forest-eyes-final/treeko-brain.js').getSoil(lat, lon, fetch, 35000);
+    const soil = await require('../frontend/forest-eyes/treeko-brain.js').getSoil(lat, lon, fetch, 35000);
     res.writeHead(soil ? 200 : 503, { 'content-type': 'application/json; charset=utf-8' });
     return res.end(JSON.stringify(soil || { error: 'SoilGrids is unavailable right now.' }));
   }

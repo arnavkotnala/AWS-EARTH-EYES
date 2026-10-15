@@ -54,7 +54,7 @@ function buildPlan(cfg) {
 function describe() {
   return buildPlan(settings())
     .filter((s, i, a) => a.findIndex(x => x.provider === s.provider && x.model === s.model) === i)
-    .map(s => `${s.provider}:${s.model}${s.fallback ? ' (fallback)' : ''}`);
+    .map(s => (s.fallback ? 'backup model' : `${s.provider === 'gemini' ? 'google-ai-studio' : s.provider}:${s.model}`));
 }
 
 /**

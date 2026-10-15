@@ -18,7 +18,7 @@
 
 const gemma = require('./gemma.js');
 const rivers = require('./rivers.js');
-const brain = require('./forest-eyes-final/treeko-brain.js');
+const brain = require('../frontend/forest-eyes/treeko-brain.js');
 const terrainTiles = require('./elevation.js');
 const soilIndia = require('./soil.js');
 
