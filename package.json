@@ -1,0 +1,13 @@
+{
+  "name": "earth-intelligence-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Forest Eyes + River Eyes + Hazard Lens: global environmental hazard screening with Gemma 4",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

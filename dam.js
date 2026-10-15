@@ -1,0 +1,292 @@
+/**
+ * Earth Intelligence Platform — hydropower site screening (dam.js)
+ * ================================================================
+ * POST /api/v1/dam/screen { lat, lon, targetMw }
+ *
+ * Screens candidate run-of-river hydropower sites along the REAL river near the point:
+ *   1. snap to the nearest major river reach                 (HydroRIVERS)
+ *   2. take ~60 km of main channel upstream and downstream   (HydroRIVERS network)
+ *   3. place a node every ~1 km and snap it to the true valley floor: HydroRIVERS lines come
+ *      from a ~500 m grid, so scan ±600 m across the valley and refine to the lowest point
+ *                                                            (AWS Terrain Tiles, ~30 m)
+ *   4. at every node, find where the valley sides rise WEIR_HEIGHT_M above the bed: that line
+ *      is the weir axis, and its length (the crest) tells how narrow the gorge is
+ *   5. for each candidate intake → powerhouse pair over a DIVERSION_KM stretch:
+ *        head  H = z(intake) − z(powerhouse)
+ *        flow  Q = long-term mean discharge at the powerhouse (HydroRIVERS, modelled)
+ *        power P = η · ρ · g · Q · H
+ *   6. rank by power and gorge narrowness, then pick non-overlapping sites up to the target.
+ *
+ * Preliminary screening only. NOT evaluated here (and reported as such): protected areas,
+ * seismic/fault hazard, settlements and displacement, sediment, GLOF, geology, flow
+ * variability and environmental flows.
+ */
+'use strict';
+
+const rivers = require('./rivers.js');
+const terrainTiles = require('./elevation.js');
+
+const ETA = 0.85;            // turbine + generator efficiency
+const RHO = 1000, G = 9.81;
+const DIVERSION_KM = 6;      // typical run-of-river tunnel/channel length
+const CAPACITY_FACTOR = 0.5; // for annual energy: rivers rarely run at mean flow all year
+const WALL_OFFSET_KM = 1;
+const MIN_HEAD_M = 15;       // smaller heads are within the elevation model's error
+const MAX_GRADIENT = 80;     // m/km; steeper on a >1000 km2 river means a bad elevation sample
+const NODE_SPACING_KM = 1;   // candidate sites every ~1 km along the river
+const WEIR_HEIGHT_M = 15;    // typical run-of-river diversion weir
+const MAX_CREST_M = 2000;    // wider than this is a floodplain, not a gorge
+// Typical river width from mean flow (hydraulic geometry, W ≈ a·Q^0.5; Leopold & Maddock 1953 form).
+// A weir can't be shorter than the river is wide: a much shorter "crest" means the elevation
+// model misread the channel (flat water, shadowed gorge), so that site is not trusted.
+const riverWidthM = q => 7.2 * Math.sqrt(Math.max(0, q));
+const MIN_CREST_TO_WIDTH = 0.6;
+const range = (from, to, step) => Array.from({ length: Math.round((to - from) / step) + 1 }, (_, k) => +(from + k * step).toFixed(4));
+const COARSE_KM = range(-0.6, 0.6, 0.075); // first scan across the valley for the river bed
+const FINE_KM = range(-0.06, 0.06, 0.015); // refine around the lowest coarse sample
+const PROFILE_KM = range(-1, 1, 0.025);    // cross-section for the weir axis
+
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
+}
+
+// Elevation never changes: cache it (~11 m grid) so repeated demos cost no API calls.
+const elevCache = new Map();
+const cacheKey = p => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+
+/** Elevations: AWS Terrain Tiles first (no rate limit), Open-Meteo as a backup. */
+let elevationSource = terrainTiles.SOURCE;
+async function elevations(points) {
+  try {
+    const z = await terrainTiles.elevations(points);
+    elevationSource = terrainTiles.SOURCE;
+    return z;
+  } catch (err) {
+    console.warn('[dam] terrain tiles unavailable, using Open-Meteo:', err.message);
+    elevationSource = 'Copernicus DEM GLO-90 via Open-Meteo';
+    return openMeteoElevations(points);
+  }
+}
+
+/** Open-Meteo elevation: up to 100 points per request; free tier is rate-limited (HTTP 429). */
+async function openMeteoElevations(points) {
+  const missing = [...new Set(points.map(cacheKey))].filter(k => !elevCache.has(k));
+  for (let i = 0; i < missing.length; i += 100) {
+    const chunk = missing.slice(i, i + 100).map(k => k.split(','));
+    const url = 'https://api.open-meteo.com/v1/elevation' +
+      `?latitude=${chunk.map(p => p[0]).join(',')}&longitude=${chunk.map(p => p[1]).join(',')}`;
+    let res;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      if (res.status !== 429) break;
+      await new Promise(r => setTimeout(r, 4000 * (attempt + 1)));
+    }
+    if (res.status === 429) throw httpError(503, 'The free elevation service is busy (rate limit). Wait a minute and try again.');
+    if (!res.ok) throw new Error(`elevation HTTP ${res.status}`);
+    const j = await res.json();
+    if (!Array.isArray(j.elevation) || j.elevation.length !== chunk.length) throw new Error('bad elevation response');
+    chunk.forEach((p, k) => elevCache.set(p.join(','), j.elevation[k]));
+  }
+  if (elevCache.size > 200000) elevCache.clear();
+  return points.map(p => elevCache.get(cacheKey(p)));
+}
+
+function kmBetween([la1, lo1], [la2, lo2]) {
+  return Math.hypot(la2 - la1, (lo2 - lo1) * Math.cos(((la1 + la2) / 2) * Math.PI / 180)) * 111.32;
+}
+
+/** Point offset perpendicular to the direction a→b, by km (+ = left bank looking downstream). */
+function perpendicular([lat, lon], a, b, km) {
+  const k = Math.cos(lat * Math.PI / 180);
+  const dx = (b[1] - a[1]) * k, dy = b[0] - a[0];
+  const len = Math.hypot(dx, dy) || 1;
+  const deg = km / 111.32;
+  return [lat + (dx / len) * deg, lon + (-dy / len) * deg / k];
+}
+
+async function screen({ lat, lon, targetMw }) {
+  lat = Number(lat); lon = Number(lon);
+  targetMw = Math.min(5000, Math.max(1, Number(targetMw) || 100));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 85 || Math.abs(lon) > 180) {
+    throw httpError(400, 'Valid lat and lon are required.');
+  }
+  if (!rivers.available()) throw httpError(503, 'River network data is not installed on the server.');
+
+  const reach = rivers.nearest(lat, lon, 20);
+  if (!reach) throw httpError(404, 'No major river (≥ 1000 km² catchment) within 20 km. Click closer to a river.');
+
+  // Nodes every ~1 km along the channel, upstream → downstream.
+  const chain = rivers.stretch(reach.id, 60, 60);
+  const nodes = [];
+  let along = 0;
+  for (const r of chain) {
+    // Walk the reach's real shape (not the straight chord between its ends) placing a node
+    // every ~NODE_SPACING_KM; distances are scaled to the reach's official length.
+    const pts = r.shape;
+    const seg = pts.slice(1).map((p, k) => kmBetween(pts[k], p));
+    const total = seg.reduce((a, b) => a + b, 0) || 1;
+    const n = Math.max(1, Math.round(r.reachLengthKm / NODE_SPACING_KM));
+    for (let k = 0; k < n; k++) {
+      let target = (k / n) * total, j = 0;
+      while (j < seg.length - 1 && target > seg[j]) target -= seg[j++];
+      const t = seg[j] ? Math.min(1, target / seg[j]) : 0;
+      nodes.push({
+        line: [pts[j][0] + (pts[j + 1][0] - pts[j][0]) * t, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * t],
+        q: r.meanDischargeCms, alongKm: along + r.reachLengthKm * (k / n), reach: r,
+      });
+    }
+    along += r.reachLengthKm;
+  }
+  const last = chain[chain.length - 1];
+  nodes.push({ line: last.end, q: last.meanDischargeCms, alongKm: along, reach: last });
+  // Direction of flow at each node (for cross-sections)
+  const dir = i => [nodes[Math.max(0, i - 1)].line, nodes[Math.min(nodes.length - 1, i + 1)].line];
+
+  // Snap each node to the valley floor: coarse scan, then fine scan around the lowest sample.
+  const coarse = await elevations(nodes.flatMap((n, i) => COARSE_KM.map(km => perpendicular(n.line, ...dir(i), km))));
+  nodes.forEach((n, i) => {
+    const row = coarse.slice(i * COARSE_KM.length, (i + 1) * COARSE_KM.length);
+    n.offsetKm = COARSE_KM[row.indexOf(Math.min(...row))];
+  });
+  const fine = await elevations(nodes.flatMap((n, i) => FINE_KM.map(km => perpendicular(n.line, ...dir(i), n.offsetKm + km))));
+  nodes.forEach((n, i) => {
+    const row = fine.slice(i * FINE_KM.length, (i + 1) * FINE_KM.length);
+    const k = row.indexOf(Math.min(...row));
+    n.offsetKm += FINE_KM[k];
+    n.pt = perpendicular(n.line, ...dir(i), n.offsetKm).map(v => +v.toFixed(5));
+    n.bedZ = row[k];
+    n.z = row[k];
+  });
+
+  // Cross-section through the snapped bed point: weir axis where both sides reach bed + WEIR_HEIGHT_M.
+  const prof = await elevations(nodes.flatMap((n, i) => PROFILE_KM.map(km => perpendicular(n.pt, ...dir(i), km))));
+  const mid = PROFILE_KM.indexOf(0);
+  nodes.forEach((n, i) => {
+    const row = prof.slice(i * PROFILE_KM.length, (i + 1) * PROFILE_KM.length);
+    const crest = n.bedZ + WEIR_HEIGHT_M;
+    let l = mid, r = mid;
+    while (l > 0 && row[l] < crest) l--;
+    while (r < row.length - 1 && row[r] < crest) r++;
+    const closed = row[l] >= crest && row[r] >= crest;
+    n.crestM = closed ? Math.round((PROFILE_KM[r] - PROFILE_KM[l]) * 1000) : null; // null: valley wider than 2 km
+    n.weirAxis = [perpendicular(n.pt, ...dir(i), PROFILE_KM[l]), perpendicular(n.pt, ...dir(i), PROFILE_KM[r])]
+      .map(p => p.map(v => +v.toFixed(5)));
+    // the LOWER valley side 1 km out limits how high a dam could ever go
+    n.wallM = Math.max(0, Math.min(row[0], row[row.length - 1]) - n.bedZ);
+  });
+  // Water runs downhill: the bed can't rise downstream (removes DEM bumps, e.g. bridges, cliffs).
+  for (let i = 1; i < nodes.length; i++) nodes[i].z = Math.min(nodes[i].z, nodes[i - 1].z);
+
+  // Candidate = powerhouse at node j, intake at the node ~DIVERSION_KM upstream.
+  const candidates = [];
+  for (let j = 1; j < nodes.length; j++) {
+    let i = j;
+    while (i > 0 && nodes[j].alongKm - nodes[i - 1].alongKm <= DIVERSION_KM * 1.25) i--;
+    if (i === j) continue;
+    const head = nodes[i].z - nodes[j].z;
+    const lenKm = nodes[j].alongKm - nodes[i].alongKm;
+    if (head < MIN_HEAD_M || lenKm < 1 || head / lenKm > MAX_GRADIENT) continue;
+    const q = nodes[j].q;
+    const mw = (ETA * RHO * G * q * head) / 1e6;
+    if (mw < 1) continue;
+    if (nodes[i].crestM === null || nodes[i].crestM > MAX_CREST_M) continue; // no gorge to hold a weir
+    const widthM = riverWidthM(nodes[i].q);
+    if (nodes[i].crestM < MIN_CREST_TO_WIDTH * widthM) continue; // crest narrower than the river: DEM misread
+    candidates.push({
+      intake: nodes[i].pt, powerhouse: nodes[j].pt,
+      route: nodes.slice(i, j + 1).map(n => n.pt),
+      weirAxis: nodes[i].weirAxis, weirCrestM: nodes[i].crestM, weirHeightM: WEIR_HEIGHT_M,
+      riverWidthEstM: Math.round(widthM),
+      intakeAlongKm: nodes[i].alongKm, powerhouseAlongKm: nodes[j].alongKm,
+      diversionKm: +lenKm.toFixed(1), headM: Math.round(head), flowCms: +q.toFixed(1),
+      mw: +mw.toFixed(1), gradientMPerKm: +(head / lenKm).toFixed(1),
+      valleyWallM: Math.round(nodes[i].wallM),
+      riverBedElevationM: Math.round(nodes[j].z),
+      upstreamAreaKm2: nodes[j].reach.upstreamAreaKm2,
+    });
+  }
+  if (!candidates.length) {
+    return {
+      ok: false,
+      reason: `No viable diversion site along this ~120 km stretch: either the river never drops ${MIN_HEAD_M} m within ~${DIVERSION_KM} km, ` +
+        `or where it does the valley is too wide (> ${MAX_CREST_M / 1000} km) for a ${WEIR_HEIGHT_M} m weir. ` +
+        'Low-head barrages may still be possible but need a detailed survey.',
+      river: describeRiver(reach), channel: nodes.map(n => n.pt), assumptions: assumptions(), notEvaluated: NOT_EVALUATED,
+    };
+  }
+
+  // Score: power (log scale) 65 %, short weir crest = narrow gorge = cheaper, stable weir 35 %.
+  const maxLog = Math.max(...candidates.map(c => Math.log10(c.mw + 1)));
+  for (const c of candidates) {
+    const narrow = 1 - Math.min(1, c.weirCrestM / MAX_CREST_M);
+    c.score = Math.round(100 * (0.65 * Math.log10(c.mw + 1) / maxLog + 0.35 * narrow));
+  }
+  candidates.sort((a, b) => b.score - a.score);
+
+  // Pick non-overlapping schemes (river stretches must not overlap) until the target is met.
+  const chosen = [];
+  let total = 0;
+  for (const c of candidates) {
+    if (chosen.length >= 4 || total >= targetMw) break;
+    const overlaps = chosen.some(o => c.intakeAlongKm < o.powerhouseAlongKm && o.intakeAlongKm < c.powerhouseAlongKm);
+    if (overlaps) continue;
+    chosen.push(c);
+    total += c.mw;
+  }
+  chosen.sort((a, b) => a.intakeAlongKm - b.intakeAlongKm);
+  chosen.forEach((c, k) => { c.rank = k + 1; });
+
+  const annualGWh = Math.round(total * 8760 * CAPACITY_FACTOR / 1000);
+  return {
+    ok: true,
+    targetMw,
+    achievedMw: +total.toFixed(1),
+    meetsTarget: total >= targetMw,
+    annualGWh,
+    sites: chosen,
+    candidatesEvaluated: candidates.length,
+    river: describeRiver(reach),
+    channel: nodes.map(n => n.pt),
+    profile: nodes.map(n => ({ km: +n.alongKm.toFixed(1), z: Math.round(n.z) })),
+    assumptions: assumptions(),
+    notEvaluated: NOT_EVALUATED,
+    sources: [
+      'River network & mean discharge: HydroRIVERS v1.0 (HydroSHEDS, Lehner & Grill 2013), modelled',
+      `Elevation: ${elevationSource} (heads are approximate)`,
+    ],
+  };
+}
+
+function describeRiver(reach) {
+  return {
+    distanceFromClickKm: reach.distanceKm,
+    meanDischargeCms: reach.meanDischargeCms,
+    upstreamAreaKm2: reach.upstreamAreaKm2,
+    strahlerOrder: reach.strahlerOrder,
+  };
+}
+
+function assumptions() {
+  return [
+    `Run-of-river schemes: water diverted ~${DIVERSION_KM} km through a tunnel/channel to a powerhouse downstream.`,
+    `Power = η·ρ·g·Q·H with η = ${ETA}, Q = long-term MEAN flow (modelled). Real design flow is usually lower.`,
+    `Annual energy assumes a ${Math.round(CAPACITY_FACTOR * 100)} % capacity factor.`,
+    'Head is the river-bed drop from a ~30-90 m elevation model; in narrow gorges it can be off by tens of metres.',
+    'River points are snapped to the lowest ground within ±600 m across the valley (HydroRIVERS lines can be several hundred metres off).',
+    `Weir axis: the line across the valley between the points where both sides rise ${WEIR_HEIGHT_M} m above the river bed; its length is the crest length.`,
+    `Sites whose crest is shorter than ${MIN_CREST_TO_WIDTH * 100} % of the river's typical width (≈ 7.2·√Q m) are rejected as elevation-model errors.`,
+    `"Valley wall" = height of the LOWER valley side ${WALL_OFFSET_KM} km from the river.`,
+  ];
+}
+
+const NOT_EVALUATED = [
+  'Protected areas and biodiversity (e.g. national parks, WDPA)',
+  'Earthquake and active-fault hazard',
+  'Settlements, farmland and people who would be displaced',
+  'Sediment load, glacial-lake outburst floods (GLOF) and landslide-dammed lakes',
+  'Geology and foundation conditions',
+  'Seasonal flow variability, environmental flows and downstream water users',
+  'Existing dams and transboundary agreements',
+];
+
+module.exports = { screen };
