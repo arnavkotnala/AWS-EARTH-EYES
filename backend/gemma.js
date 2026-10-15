@@ -21,7 +21,8 @@ const settings = () => ({
   geminiKey: (process.env.GEMINI_API_KEY || '').trim(),
   gemmaModels: (process.env.GEMMA_MODELS || 'gemma-4-26b-a4b-it,gemma-4-31b-it')
     .split(',').map(s => s.trim()).filter(Boolean),
-  fallback: (process.env.GEMINI_FALLBACK_MODEL || '').trim(),
+  // Gemini backup models, comma-separated: each has its own free-tier quota, so a second one helps
+  fallbacks: (process.env.GEMINI_FALLBACK_MODEL || '').split(',').map(x => x.trim()).filter(Boolean),
   bedrockKey: (process.env.BEDROCK_API_KEY || process.env.AWS_BEARER_TOKEN_BEDROCK || '').trim(),
   bedrockRegion: (process.env.BEDROCK_REGION || 'us-east-1').trim(),
   bedrockModel: (process.env.BEDROCK_MODEL_ID || '').trim(),
@@ -45,7 +46,7 @@ function buildPlan(cfg) {
   if (cfg.geminiKey) {
     cfg.gemmaModels.forEach((model, i) =>
       plan.push(...Array(i === 0 ? cfg.attempts : 1).fill({ provider: 'gemini', model })));
-    if (cfg.fallback) plan.push({ provider: 'gemini', model: cfg.fallback, fallback: true });
+    for (const model of cfg.fallbacks) plan.push({ provider: 'gemini', model, fallback: true });
   }
   return plan;
 }
@@ -78,14 +79,15 @@ async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl 
 
   for (let i = 0; i < plan.length; i++) {
     const step = plan[i];
-    // Keep 15 s of the budget for the fallback model, if there is one.
-    const reserve = fallbackAt > i ? 15000 : 0;
+    // Keep 30 s of the budget for the Gemini backup, if there is one.
+    const reserve = fallbackAt > i ? 30000 : 0;
     const remaining = deadline - Date.now() - reserve;
     if (remaining < 5000) {
       if (fallbackAt > i) { i = fallbackAt - 1; continue; }
       break;
     }
-    const perAttempt = Math.min(Math.max(timeoutMs || 0, cfg.timeoutMs), remaining);
+    // Gemma attempts are capped; the backup gets all the time that is left.
+    const perAttempt = step.fallback ? Math.min(remaining, 20000) : Math.min(Math.max(timeoutMs || 0, cfg.timeoutMs), remaining);
     try {
       const text = step.provider === 'bedrock'
         ? await callBedrock(step.model, turns, cfg, perAttempt, fetchImpl)
@@ -98,9 +100,10 @@ async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl 
       const retryable = RETRYABLE.has(err.upstreamStatus) || err.retry ||
         err.name === 'TimeoutError' || err.name === 'AbortError';
       console.warn(`[gemma] ${step.provider}:${step.model} failed (${err.upstreamStatus || err.name}: ${String(err.message).slice(0, 120)})`);
-      // A bad key or bad request on one provider should not stop the next provider.
-      if (!retryable && plan[i + 1]?.provider === step.provider) {
-        const next = plan.findIndex((s, j) => j > i && s.provider !== step.provider);
+      // A non-retryable failure (model missing, bad request, refused…) skips the remaining attempts
+      // of this model family and goes to the next provider, or else straight to the Gemini backup.
+      if (!retryable) {
+        const next = plan.findIndex((s, j) => j > i && (s.provider !== step.provider || s.fallback));
         if (next < 0) break;
         i = next - 1;
       }
@@ -129,6 +132,10 @@ async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl)
   // GEMMA_JSON_MODE=prompt: ask for JSON in the prompt only (no constrained decoding).
   if (schema && process.env.GEMMA_JSON_MODE !== 'prompt') {
     body.generationConfig = { responseMimeType: 'application/json', responseJsonSchema: schema };
+  }
+  // Gemini backup: minimal "thinking" answers in ~2-3 s instead of 5-15 s
+  if (model.startsWith('gemini')) {
+    body.generationConfig = { ...(body.generationConfig || {}), thinkingConfig: { thinkingLevel: 'minimal' } };
   }
   const res = await fetchImpl(GEMINI_API + encodeURIComponent(model) + ':generateContent', {
     method: 'POST',
