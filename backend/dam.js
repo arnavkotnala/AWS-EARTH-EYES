@@ -332,30 +332,55 @@ function foundationScore(s) {
   return Math.max(0, Math.min(1, 0.5 + 0.5 * stones - 0.4 * clay));
 }
 
+/** Shortest distance (km) from a point to a polyline. */
+function kmToRoute(pt, route) {
+  let best = Infinity;
+  for (let i = 1; i < route.length; i++) {
+    const [a, b] = [route[i - 1], route[i]];
+    const k = Math.cos(pt[0] * Math.PI / 180);
+    const ax = a[1] * k, ay = a[0], bx = b[1] * k, by = b[0], px = pt[1] * k, py = pt[0];
+    const dx = bx - ax, dy = by - ay;
+    const t = dx || dy ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy))) : 0;
+    best = Math.min(best, Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) * 111.32);
+  }
+  return route.length === 1 ? kmFrom(pt, route[0]) : best;
+}
+
 /**
- * Every feasible scheme that can coexist: candidates are taken best-first and kept unless their
- * river stretch overlaps one already kept (same section) or their weirs are < 3 km apart.
- * `section` identifies the analysed river section a candidate came from.
+ * Do two schemes use the same water? Same section: their river stretches overlap. Different
+ * sections (which can share channel): either weir lies on/near the other's diversion route,
+ * or the weirs are under 3 km apart.
  */
+function clashes(a, b) {
+  if (a.section === b.section) return a.intakeAlongKm < b.powerhouseAlongKm && b.intakeAlongKm < a.powerhouseAlongKm;
+  return kmFrom(a.intake, b.intake) < 3 || kmToRoute(a.intake, b.route) < 0.5 || kmToRoute(b.intake, a.route) < 0.5;
+}
+
+/** Every feasible scheme that can coexist, taken best-first (no shared water, see clashes()). */
 function feasibleSet(candidates, rankBy = c => c.mw) {
   const kept = [];
   for (const c of [...candidates].sort((a, b) => rankBy(b) - rankBy(a))) {
-    const clash = kept.some(o => (o.section === c.section
-      ? c.intakeAlongKm < o.powerhouseAlongKm && o.intakeAlongKm < c.powerhouseAlongKm
-      : kmFrom(o.intake, c.intake) < 3));
-    if (!clash) kept.push(c);
+    if (!kept.some(o => clashes(o, c))) kept.push(c);
   }
   return kept;
 }
 
-/** Groups feasible sites into regions: sites whose weirs lie within 15 km of each other. */
-function regionsOf(sites) {
-  const regions = [];
-  for (const s of sites) {
-    const r = regions.find(g => g.some(o => kmFrom(o.intake, s.intake) <= 15));
-    if (r) r.push(s); else regions.push([s]);
+/** Regions = groups of points chained within linkKm of each other (single linkage, order-independent). */
+function regionsOf(items, linkKm = 15, pointOf = x => x.intake) {
+  const parent = items.map((_, i) => i);
+  const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (kmFrom(pointOf(items[i]), pointOf(items[j])) <= linkKm) parent[find(i)] = find(j);
+    }
   }
-  return regions;
+  const groups = new Map();
+  items.forEach((x, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(x);
+  });
+  return [...groups.values()];
 }
 
 async function plan({ city, lat, lon, targetMw, radiusKm }) {
@@ -417,12 +442,16 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
     regions: regionsOf(allFeasible).length,
     totalMw: +allFeasible.reduce((t, c) => t + c.mw, 0).toFixed(1),
     points: allFeasible.map(c => ({ intake: c.intake, mw: c.mw })),
+    // Detailed analysis covers only the best stretches; the rest of the coarse screen is reported as
+    // "promising, not verified" so the counts above are read as minimums.
+    complete: picked.length >= seeds.length,
+    unverifiedAreas: regionsOf(seeds.filter(s => !picked.includes(s)).filter(s => !picked.some(p => kmFrom(p.mid, s.mid) < 20)), 15, s => s.mid).length,
   };
   if (!candidates.length) {
     return {
       ok: false, city: { name: cityName, lat, lon }, targetMw, radiusKm,
       reason: `Within ${radiusKm} km of ${cityName} no river stretch has enough drop and a narrow enough valley for run-of-river hydropower. Try a larger radius.`,
-      feasible: { sites: 0, regions: 0, totalMw: 0, points: [] },
+      feasible: { sites: 0, regions: 0, totalMw: 0, points: [], complete: picked.length >= seeds.length, unverifiedAreas: 0 },
       reachesScanned: rows.length, assumptions: assumptions(), notEvaluated: PLAN_NOT_EVALUATED,
     };
   }
@@ -457,10 +486,7 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
   let total = 0;
   for (const c of candidates) {
     if (chosen.length >= 8 || total >= targetMw) break;
-    const clash = chosen.some(o => (o.stretch === c.stretch
-      ? c.intakeAlongKm < o.powerhouseAlongKm && o.intakeAlongKm < c.powerhouseAlongKm
-      : kmFrom(o.intake, c.intake) < 3));
-    if (clash) continue;
+    if (chosen.some(o => clashes(o, c))) continue;
     chosen.push(c);
     total += c.mw;
   }
@@ -509,7 +535,7 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
 // River Dam Atlas: every feasible site along one whole river
 // ---------------------------------------------------------------------------
 const ATLAS_SECTION_KM = 30;
-const ATLAS_MAX_SECTIONS = 16;
+const ATLAS_MAX_SECTIONS = 20;
 
 /**
  * input: { sketch: [[lat, lon], ...] } (a named river's rough line) or { lat, lon } (any river,
@@ -585,7 +611,11 @@ async function atlas({ name, sketch, lat, lon }) {
     river: { name: riverName || 'River', lengthKm: Math.round(lengthKm), reaches: reaches.length },
     path: reaches.flatMap((r, k) => (k ? r.shape.slice(1) : r.shape)),
     sections: { total: sections.length, promising: promising.length, analysed: chosen.length },
-    feasible: { sites: sites.length, regions: regionsOf(sites).length, totalMw: +sites.reduce((t, c) => t + c.mw, 0).toFixed(1) },
+    feasible: {
+      sites: sites.length, regions: regionsOf(sites).length, totalMw: +sites.reduce((t, c) => t + c.mw, 0).toFixed(1),
+      complete: chosen.length >= promising.length,
+      unverifiedSections: promising.length - chosen.length,
+    },
     sites,
     tookMs: Date.now() - t0,
     assumptions: [
