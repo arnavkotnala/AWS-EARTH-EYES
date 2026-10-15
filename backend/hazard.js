@@ -62,7 +62,14 @@ function httpError(status, message) {
 
 async function getJson(url, ms = 15000) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { accept: 'application/json' } });
+    let res;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { accept: 'application/json' } });
+    } catch (err) {
+      // dropped connection / DNS blip: retry twice, like rate limits below
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue; }
+      throw err;
+    }
     // free APIs rate-limit bursts: wait and retry twice before giving up
     if ((res.status === 429 || res.status >= 500) && attempt < 2) {
       await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
@@ -92,10 +99,21 @@ async function satelliteImage(lat, lon) {
   const [w, s, e, n] = bbox(lat, lon);
   const url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export' +
     `?bbox=${w},${s},${e},${n}&bboxSR=4326&imageSR=3857&size=${IMG_PX},${IMG_PX}&format=jpg&f=image`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length < 5000) throw new Error('empty image');
+  // The image is what Gemma 4 reads: retry a dropped or failed download twice
+  let buf, lastErr;
+  for (let attempt = 0; attempt < 3 && !buf; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const b = Buffer.from(await res.arrayBuffer());
+      if (b.length < 5000) throw new Error('empty image');
+      buf = b;
+    } catch (err) {
+      lastErr = err;
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+  if (!buf) throw lastErr;
   return { base64: buf.toString('base64'), bbox: [w, s, e, n], source: 'Esri World Imagery (Maxar, Earthstar Geographics)' };
 }
 
