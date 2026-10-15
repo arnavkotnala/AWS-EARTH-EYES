@@ -455,7 +455,7 @@ async function analyzeLocation(lat, lng) {
 
   // Clear *visual* UI for the new analysis, but caches survive
   showLoading();
-  setStatus('loading', mode === 'real' ? 'Fetching live satellite data…' : 'Simulating analysis…');
+  setStatus('loading', 'Analyzing…');
   clearMapLayers();
   appState.activeLocationId = locId;
   map.setView([lat, lng], 9);
