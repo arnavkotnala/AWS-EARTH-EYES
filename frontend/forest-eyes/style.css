@@ -117,8 +117,7 @@ html, body {
 .brand-icon {
   font-size: 28px;
   line-height: 1;
-  filter: drop-shadow(0 0 12px rgba(0,230,118,0.6));
-  animation: pulse-glow 3s ease-in-out infinite;
+  filter: drop-shadow(0 0 14px rgba(0,230,118,0.7)); /* static glow: an animated blur repainted every frame */
 }
 
 @keyframes pulse-glow {

@@ -269,6 +269,7 @@ if (globeToggle) globeToggle.addEventListener('change', (event) => {
   if (showGlobe) {
     initGlobe();
     resizeGlobe();
+    resumeGlobe();
   }
   window.ForestGlobeTransition?.onToggle(showGlobe); // [transition] animated 2D→3D wrap; no-op if globe-transition.js is missing
 });
@@ -1161,14 +1162,33 @@ function initGlobe() {
     autoRotate: true,
   };
   bindGlobeControls();
+  // Render loop runs only while the globe is switched on and this app is on screen; otherwise it
+  // stops (it used to redraw 60×/s forever, even hidden) and resumeGlobe() restarts it.
   const animate = () => {
     if (!globeScene) return;
+    if (!globeToggle?.checked || appHidden) { globeScene.paused = true; return; }
     if (globeScene.autoRotate && !globeScene.isDragging) earth.rotation.y += 0.0015;
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
   };
+  globeScene.animate = animate;
   animate();
 }
+
+function resumeGlobe() {
+  if (globeScene?.paused && globeToggle?.checked && !appHidden) {
+    globeScene.paused = false;
+    globeScene.animate();
+  }
+}
+
+// The Earth Intelligence shell tells this app when it is hidden behind River Eyes
+let appHidden = false;
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || e.data?.type !== 'app-visibility') return;
+  appHidden = !e.data.visible;
+  if (!appHidden) resumeGlobe();
+});
 
 function resizeGlobe() {
   if (!globeScene) return;

@@ -732,6 +732,11 @@
     }
     .leaflet-control-layers input { accent-color: #38bdf8; }
     .atlas-row:hover { background: rgba(56, 189, 248, 0.08); }
+    #map-container.picking-river, #map-container.picking-river .leaflet-interactive { cursor: crosshair !important; }
+    .rank-choice { display: flex; gap: 6px; }
+    .rank-choice label { flex: 1; display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; font-size: 11px; color: var(--text-muted); cursor: pointer; }
+    .rank-choice label:has(input:checked) { border-color: rgba(56,189,248,.6); color: #fff; background: rgba(56,189,248,.08); }
+    .rank-choice input { accent-color: #38bdf8; margin: 0; }
 </style>
 </head>
 <body>
@@ -815,7 +820,7 @@
             <input type="text" id="plan-city" class="panel-input" style="flex: 1;" value="Dehradun" placeholder="e.g. Dehradun, Shimla, Guwahati" />
             <button class="btn" id="plan-city-go" type="button" style="padding: 0 12px;" title="Find city">🔍</button>
           </div>
-          <div id="plan-city-found" style="font-size: 10px; color: var(--text-dim); margin-top: 4px;">📍 Dehradun, Uttarakhand, India (30.32, 78.03) · or click the map</div>
+          <div id="plan-city-found" style="font-size: 10px; color: var(--text-dim); margin-top: 4px;">📍 Dehradun, Uttarakhand, India (30.32, 78.03)</div>
           <input type="hidden" id="target-lat" value="30.3165" />
           <input type="hidden" id="target-lon" value="78.0322" />
           <input type="hidden" id="target-location-name" value="Dehradun" />
@@ -843,11 +848,16 @@
           </div>
         </div>
 
+        <div class="input-group" style="margin-bottom: 4px;">
+          <label class="input-label">Rank sites by</label>
+          <div class="rank-choice" role="radiogroup" aria-label="Rank sites by">
+            <label><input type="radio" name="plan-rank" value="best" checked /> <span>Best overall</span></label>
+            <label><input type="radio" name="plan-rank" value="nearest" /> <span>Nearest to the city</span></label>
+          </div>
+        </div>
+
         <button class="btn btn-primary btn-run-analysis" style="margin-top: 8px;" onclick="runCityPlan()">
           <span>Find Dam Sites for this City</span>
-        </button>
-        <button class="btn" style="width: 100%; justify-content: center; margin-top: 6px; font-size: 11px;" onclick="triggerCinematicAnalysis()" title="Screen only the river nearest to the selected point">
-          <span>Analyse only the river at this point</span>
         </button>
       </div>
 
@@ -858,9 +868,8 @@
         <button class="btn btn-primary btn-run-analysis" onclick="runRiverAtlas('selected')">
           <span id="atlas-selected-label">Scan the selected river</span>
         </button>
-        <button class="btn" style="width: 100%; justify-content: center; margin-top: 6px; font-size: 11px;" onclick="runRiverAtlas('point')" title="Click a river on the map first">
-          <span>Scan the river I clicked on the map</span>
-        </button>
+        <button class="btn" id="pick-river-btn" style="width: 100%; justify-content: center; margin-top: 6px; font-size: 12px; border-color: rgba(253,224,71,.5);" onclick="setPickMode(!pickMode)">🖱️ Pick a river on the map</button>
+        <div id="pick-river-hint" style="display: none; font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">Move the cursor over a river: its whole length lights up. Click it to find every dam site along it. Esc cancels.</div>
       </div>
 
       <!-- SECTION 3: Basin Telemetry & Real-Time Metrics -->
@@ -1331,16 +1340,18 @@
       // Highlighted rivers of the basin selector, drawn on top
       drawWorldRiverPolylines();
 
+      // River picking (hover highlight, click scans) takes over the map while active
+      map.on('mousemove', onPickMove);
+      document.addEventListener('keydown', e => { if (e.key === 'Escape' && pickMode) setPickMode(false); });
+
       // Click on map to set Target Location for Dam Planner
       map.on('click', function(e) {
+        if (pickMode) { onPickClick(); return; }
         document.getElementById('target-lat').value = e.latlng.lat.toFixed(4);
         document.getElementById('target-lon').value = e.latlng.lng.toFixed(4);
         document.getElementById('target-location-name').value = `Coord (${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)})`;
         loadSiteConditions(e.latlng.lat, e.latlng.lng, `Clicked site (${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)})`);
-        const pickedName = `Point (${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)})`;
-        document.getElementById('plan-city').value = pickedName;
-        document.getElementById('target-location-name').value = pickedName;
-        document.getElementById('plan-city-found').textContent = `📍 Map point ${e.latlng.lat.toFixed(3)}, ${e.latlng.lng.toFixed(3)}`;
+
       });
     }
 
@@ -1589,6 +1600,75 @@
     }
 
     // =========================================================================
+    // PICK A RIVER: hover highlights the whole river under the cursor, click scans it
+    // server: /api/v1/rivers/at (rivers.js mainStem) → /api/v1/dam/atlas { reachId }
+    // =========================================================================
+    let pickMode = false, pickLayer = null, pickCurrent = null, pickReq = 0, pickTimer = 0, pickLast = null;
+    const INDIA_BOX = [68.0, 6.5, 97.5, 37.5];
+
+    function setPickMode(on) {
+      pickMode = on;
+      document.getElementById('map-container').classList.toggle('picking-river', on);
+      const btn = document.getElementById('pick-river-btn');
+      if (btn) btn.innerHTML = on ? '✖ Cancel picking (Esc)' : '🖱️ Pick a river on the map';
+      document.getElementById('pick-river-hint').style.display = on ? 'block' : 'none';
+      if (!on) clearPickHighlight();
+    }
+
+    function clearPickHighlight() {
+      if (pickLayer) { map.removeLayer(pickLayer); pickLayer = null; }
+      pickCurrent = null;
+    }
+
+    async function lookupRiverAt(latlng) {
+      const id = ++pickReq;
+      const z = map.getZoom();
+      // ~14 px tolerance around the cursor, in km at this zoom and latitude
+      const metresPerPx = 156543.03 * Math.cos(latlng.lat * Math.PI / 180) / Math.pow(2, z);
+      const km = Math.max(0.3, Math.min(30, (14 * metresPerPx) / 1000));
+      const inIndia = latlng.lng >= INDIA_BOX[0] && latlng.lng <= INDIA_BOX[2] && latlng.lat >= INDIA_BOX[1] && latlng.lat <= INDIA_BOX[3];
+      const min = z >= 8 && inIndia ? 100 : 1000; // small Indian rivers once zoomed in
+      try {
+        const res = await fetch(`/api/v1/rivers/at?lat=${latlng.lat.toFixed(5)}&lon=${latlng.lng.toFixed(5)}&km=${km.toFixed(2)}&min=${min}`);
+        if (!res.ok || id !== pickReq || !pickMode) return;
+        const data = await res.json();
+        if (id !== pickReq || !pickMode) return;
+        if (!data.river) {
+          clearPickHighlight();
+          document.getElementById('pick-river-hint').textContent = 'Move the cursor over a river line (zoom in for smaller rivers).';
+          return;
+        }
+        if (pickCurrent?.key === data.river.key) { pickCurrent = data.river; return; } // same river: keep drawing
+        clearPickHighlight();
+        pickCurrent = data.river;
+        pickLayer = L.layerGroup().addTo(map);
+        L.polyline(data.path, { color: '#fde047', weight: 11, opacity: 0.25, interactive: false }).addTo(pickLayer);
+        L.polyline(data.path, { color: '#fde047', weight: 4, opacity: 0.95, interactive: false }).addTo(pickLayer);
+        document.getElementById('pick-river-hint').innerHTML =
+          `<b style="color:#fde047;">Highlighted river: ${data.river.lengthKm.toLocaleString()} km</b>, ${data.river.mouthDischargeCms.toLocaleString()} m³/s at its mouth.<br/>Click to find every dam site along it.`;
+      } catch {
+        // network hiccup while hovering: ignore, the next move retries
+      }
+    }
+
+    function onPickMove(e) {
+      if (!pickMode) return;
+      pickLast = e.latlng;
+      if (pickTimer) return; // at most ~8 lookups per second
+      pickTimer = setTimeout(() => { pickTimer = 0; if (pickLast) lookupRiverAt(pickLast); }, 120);
+    }
+
+    function onPickClick() {
+      if (!pickCurrent) {
+        document.getElementById('pick-river-hint').textContent = 'No river under the cursor. Move closer to a river line, or zoom in.';
+        return;
+      }
+      const river = pickCurrent;
+      setPickMode(false);
+      runRiverAtlas('reach', { reachId: river.reachId, name: `River (${river.lengthKm.toLocaleString()} km)` });
+    }
+
+    // =========================================================================
     // RIVER DAM ATLAS — server: /api/v1/dam/atlas (dam.js atlas())
     // Every feasible site along a whole river, marked with a dam icon.
     // =========================================================================
@@ -1605,9 +1685,12 @@
       });
     }
 
-    async function runRiverAtlas(mode) {
+    async function runRiverAtlas(mode, picked) {
       let body, title;
-      if (mode === 'selected') {
+      if (mode === 'reach') {
+        body = { reachId: picked.reachId, name: picked.name };
+        title = picked.name;
+      } else if (mode === 'selected') {
         const r = WORLD_RIVERS_REGISTRY[activeRiverId];
         body = { name: r.name, sketch: r.path };
         title = r.name;
@@ -1722,6 +1805,7 @@
       const lon = parseFloat(document.getElementById('target-lon').value);
       const targetMw = parseInt(document.getElementById('mw-slider').value, 10);
       const radiusKm = parseInt(document.getElementById('plan-radius').value, 10);
+      const rankBy = document.querySelector('input[name="plan-rank"]:checked')?.value || 'best';
 
       const steps = [
         `Scanning every major river within ${radiusKm} km of ${city} (HydroRIVERS)…`,
@@ -1733,7 +1817,7 @@
       const result = await withAnalyser(`${targetMw} MW for ${city}`, steps, () =>
         fetch('/api/v1/dam/plan', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ city, lat, lon, targetMw, radiusKm }),
+          body: JSON.stringify({ city, lat, lon, targetMw, radiusKm, rankBy }),
         }));
       renderCityPlan(result.data, result.error);
     }
@@ -1859,7 +1943,7 @@
 
       resultsDiv.innerHTML = `
         <div style="background: ${r.meetsTarget ? 'rgba(16, 185, 129, 0.15)' : 'rgba(251,191,36,.1)'}; border: 1px solid ${r.meetsTarget ? 'rgba(16, 185, 129, 0.4)' : 'rgba(251,191,36,.4)'}; border-radius: 8px; padding: 10px;">
-          <div style="font-size: 11px; font-weight: 700; color: ${r.meetsTarget ? '#34d399' : '#fbbf24'}; text-transform: uppercase;">Power plan · ${escapeHtml(r.city.name)}</div>
+          <div style="font-size: 11px; font-weight: 700; color: ${r.meetsTarget ? '#34d399' : '#fbbf24'}; text-transform: uppercase;">Power plan · ${escapeHtml(r.city.name)} · ${r.rankBy === 'nearest' ? 'nearest sites first' : 'best sites first'}</div>
           <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;">${r.sites.length} site${r.sites.length > 1 ? 's' : ''} supply ${r.achievedMw} of ${r.targetMw} MW</div>
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
             ≈ <b>${r.annualGWh.toLocaleString()} GWh/yr</b> at 50 % capacity factor · ${r.reachesScanned.toLocaleString()} river reaches scanned, ${r.stretchesAnalysed} stretches analysed, ${r.candidatesScored} sites scored in ${(r.tookMs / 1000).toFixed(0)} s

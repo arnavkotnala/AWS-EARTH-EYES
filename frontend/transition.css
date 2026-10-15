@@ -76,6 +76,7 @@ html, body {
 
 .viewport-frame-wrapper.inactive {
   opacity: 0;
+  visibility: hidden; /* not painted at all while hidden (the switch happens under the full-screen transition) */
   pointer-events: none;
   z-index: 15;
   transform: scale(0.995);

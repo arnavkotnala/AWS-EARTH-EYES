@@ -174,6 +174,12 @@
         btnRiver.classList.toggle('active', river);
         btnRiver.setAttribute('aria-selected', String(river));
 
+        // Tell each app whether it is on screen (Forest Eyes pauses its 3D globe when hidden)
+        try {
+          frameForest.contentWindow?.postMessage({ type: 'app-visibility', visible: !river }, location.origin);
+          frameRiver.contentWindow?.postMessage({ type: 'app-visibility', visible: river }, location.origin);
+        } catch (e) {}
+
         // Leaflet maps need a resize after their frame becomes visible
         try {
           const frame = river ? frameRiver : frameForest;

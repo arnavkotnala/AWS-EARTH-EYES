@@ -241,6 +241,31 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // River under the cursor, whole main stem (/api/v1/rivers/at?lat=&lon=&km=&min=) — for hover highlighting
+  if (url.pathname === '/api/v1/rivers/at' && req.method === 'GET') {
+    const lat = Number(url.searchParams.get('lat')), lon = Number(url.searchParams.get('lon'));
+    const km = Math.min(30, Math.max(0.2, Number(url.searchParams.get('km')) || 5));
+    const min = Math.max(100, Number(url.searchParams.get('min')) || rivers.MAJOR_KM2);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !rivers.available()) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'lat and lon are required' }));
+    }
+    const reach = rivers.nearest(lat, lon, km, min);
+    if (!reach) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ river: null }));
+    }
+    const stem = rivers.mainStem(reach.id);
+    const body = JSON.stringify({
+      river: { reachId: reach.id, key: stem.key, lengthKm: stem.lengthKm, mouthDischargeCms: stem.mouthDischargeCms,
+        here: { distanceKm: reach.distanceKm, upstreamAreaKm2: reach.upstreamAreaKm2, meanDischargeCms: reach.meanDischargeCms } },
+      path: stem.path,
+    });
+    const gz = /gzip/.test(req.headers['accept-encoding'] || '');
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...(gz ? { 'content-encoding': 'gzip' } : {}) });
+    return res.end(gz ? zlib.gzipSync(body) : body);
+  }
+
   // River network for the map (/api/v1/rivers/network?bbox=w,s,e,n&z=zoom) — gzipped, cached by tile-ish key
   if (url.pathname === '/api/v1/rivers/network' && req.method === 'GET') {
     const bbox = String(url.searchParams.get('bbox') || '').split(',').map(Number);

@@ -302,6 +302,8 @@ function pickSites({ reach, nodes, candidates, targetMw }) {
 // City planner: "this city needs X MW — where should the dams go?"
 // ---------------------------------------------------------------------------
 const PLAN_WEIGHTS = { power: 0.35, gorge: 0.20, distance: 0.20, foundation: 0.15, seismic: 0.10 };
+// "Nearest to the city": distance dominates, the other criteria still break ties and filter bad sites
+const NEAREST_WEIGHTS = { power: 0.15, gorge: 0.15, distance: 0.50, foundation: 0.10, seismic: 0.10 };
 const kmFrom = ([la1, lo1], [la2, lo2]) => {
   const r = Math.PI / 180, a = Math.sin((la2 - la1) * r / 2) ** 2 +
     Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2;
@@ -386,7 +388,8 @@ function regionsOf(items, linkKm = 15, pointOf = x => x.intake) {
   return [...groups.values()];
 }
 
-async function plan({ city, lat, lon, targetMw, radiusKm }) {
+async function plan({ city, lat, lon, targetMw, radiusKm, rankBy }) {
+  const WEIGHTS = rankBy === 'nearest' ? NEAREST_WEIGHTS : PLAN_WEIGHTS;
   lat = Number(lat); lon = Number(lon);
   targetMw = Math.min(5000, Math.max(10, Number(targetMw) || 300));
   radiusKm = Math.min(400, Math.max(30, Number(radiusKm) || 200));
@@ -411,7 +414,9 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
     const perKm = (ETA * RHO * G * d.dischargeCms[i] * drop) / 1e6 / d.lengthKm[i];
     const mid = [(d.y0[i] + d.y1[i]) / 2e5, (d.x0[i] + d.x1[i]) / 2e5];
     const distKm = kmFrom(home, mid);
-    return { i, mid, distKm, score: perKm * DIVERSION_KM * (1 - 0.4 * distKm / radiusKm) };
+    // "nearest": closeness steers which stretches get analysed, not just the final ranking
+    const closeness = rankBy === 'nearest' ? 0.85 : 0.4;
+    return { i, mid, distKm, score: perKm * DIVERSION_KM * (1 - closeness * distKm / radiusKm) };
   }).filter(s => s && s.score >= 5).sort((a, b) => b.score - a.score);
 
   // 2. Analyse the most promising stretches (at least 20 km apart) in detail, a few at a time,
@@ -460,7 +465,9 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
   }
 
   // 3. Enrich the strongest candidates with distance, soil and earthquake history.
-  candidates.sort((a, b) => b.mw - a.mw);
+  // keep the 40 strongest (or, ranking by nearest, the 40 closest) candidates for scoring
+  candidates.forEach(c => { c.distanceToCityKm = Math.round(kmFrom(home, c.powerhouse)); });
+  candidates.sort(rankBy === 'nearest' ? (a, b) => a.distanceToCityKm - b.distanceToCityKm : (a, b) => b.mw - a.mw);
   candidates = candidates.slice(0, 40);
   await Promise.all(candidates.map(async c => {
     c.distanceToCityKm = Math.round(kmFrom(home, c.powerhouse));
@@ -480,7 +487,7 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
       seismic: c.quakesM5Within50km === null ? null : +(1 - Math.min(1, c.quakesM5Within50km / 10)).toFixed(2),
     };
     // missing criteria count as neutral (0.5) and are flagged in the UI
-    c.score = Math.round(100 * Object.entries(PLAN_WEIGHTS).reduce((t, [k, w]) => t + w * (c.criteria[k] ?? 0.5), 0));
+    c.score = Math.round(100 * Object.entries(WEIGHTS).reduce((t, [k, w]) => t + w * (c.criteria[k] ?? 0.5), 0));
   }
   candidates.sort((a, b) => b.score - a.score);
 
@@ -511,7 +518,8 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
     annualGWh: Math.round(Math.min(total, targetMw) * 8760 * CAPACITY_FACTOR / 1000),
     sites: chosen,
     feasible,
-    weights: PLAN_WEIGHTS,
+    weights: WEIGHTS,
+    rankBy: rankBy === 'nearest' ? 'nearest' : 'best',
     reachesScanned: rows.length,
     stretchesPromising: seeds.length,
     stretchesAnalysed: stretches.length,
@@ -519,7 +527,7 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
     tookMs: Date.now() - t0,
     assumptions: [
       ...assumptions(),
-      `Score = ${Object.entries(PLAN_WEIGHTS).map(([k, w]) => `${Math.round(w * 100)} % ${k}`).join(' + ')}; a missing criterion counts as neutral.`,
+      `Score = ${Object.entries(WEIGHTS).map(([k, w]) => `${Math.round(w * 100)} % ${k}`).join(' + ')}; a missing criterion counts as neutral.`,
       'Foundation = topsoil proxy (stony soil suggests shallow rock, clay-rich soil is weak); it ranks sites, it does not replace boreholes.',
       'Seismic = number of M5+ earthquakes within 50 km since 1970 (USGS); not a fault or hazard map.',
       'Distance = straight line from the powerhouse to the city (a transmission-line proxy).',
@@ -545,11 +553,17 @@ const ATLAS_MAX_SECTIONS = 20;
  * by clicking it). The river is followed source → mouth, cut into ~30 km sections, every section
  * is pre-screened on a coarse elevation model, and the most promising ones are analysed in detail.
  */
-async function atlas({ name, sketch, lat, lon }) {
+async function atlas({ name, sketch, lat, lon, reachId }) {
   if (!rivers.available()) throw httpError(503, 'River network data is not installed on the server.');
   const t0 = Date.now();
   let ids, riverName = String(name || '').slice(0, 120);
-  if (Array.isArray(sketch) && sketch.length >= 2 && sketch.every(p => Array.isArray(p) && p.every(Number.isFinite))) {
+  if (Number.isInteger(reachId)) {
+    // exactly the river the user highlighted on the map (rivers.mainStem)
+    const stem = rivers.mainStem(reachId);
+    if (!stem) throw httpError(404, 'That river is not in the river network.');
+    ids = stem.reachIds;
+    riverName = riverName || 'Selected river';
+  } else if (Array.isArray(sketch) && sketch.length >= 2 && sketch.every(p => Array.isArray(p) && p.every(Number.isFinite))) {
     const tr = rivers.traceAlong(sketch);
     if (!tr) throw httpError(404, 'Could not trace this river in the river network.');
     ids = tr.reachIds;

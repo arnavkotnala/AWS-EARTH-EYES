@@ -384,10 +384,51 @@ function network([w, s, e, n], zoom, classes = new Set([1, 2, 3, 4, 5])) {
   return { zoom, worldMinKm2: worldMin, indiaMinKm2: indiaMin, reaches: count, lines };
 }
 
+/**
+ * The whole main stem through a reach, source → mouth: upstream along the biggest tributary,
+ * downstream along NEXT_DOWN. Returns reach ids, length, and a lightweight path for drawing.
+ */
+const stemCache = new Map();
+function mainStem(id, { maxPoints = 4000 } = {}) {
+  const d = load();
+  const start = d.rowOf(id);
+  if (start === undefined) return null;
+  const up = [];
+  let i = start;
+  for (;;) {
+    const kids = d.kids(i);
+    if (!kids.length || up.length > 20000) break;
+    i = kids.reduce((a, b) => (d.uplandKm2[b] > d.uplandKm2[a] ? b : a));
+    up.push(i);
+  }
+  const down = [];
+  i = start;
+  while (d.nextRow[i] >= 0 && down.length < 20000) { i = d.nextRow[i]; down.push(i); }
+  const rows = [...up.reverse(), start, ...down];
+  const key = `${d.id[rows[0]]}-${d.id[rows[rows.length - 1]]}`;
+  if (stemCache.has(key)) return stemCache.get(key);
+  let path = joinShapes(d, rows);
+  if (path.length > maxPoints) { // thin out evenly for drawing; analysis uses the reach ids
+    const step = path.length / maxPoints;
+    path = Array.from({ length: maxPoints }, (_, k) => path[Math.floor(k * step)]).concat([path[path.length - 1]]);
+  }
+  const last = rows[rows.length - 1];
+  const stem = {
+    key,
+    reachIds: rows.map(r => d.id[r]),
+    lengthKm: Math.round(rows.reduce((t, r) => t + d.lengthKm[r], 0)),
+    mouthDischargeCms: Math.round(d.dischargeCms[last]),
+    path: path.map(([la, lo]) => [+la.toFixed(4), +lo.toFixed(4)]),
+  };
+  if (stemCache.size > 300) stemCache.delete(stemCache.keys().next().value);
+  stemCache.set(key, stem);
+  return stem;
+}
+
 /** Full reach descriptions (with shapes) for a list of reach ids, in the given order. */
 function describeIds(ids) {
   const d = load();
   return ids.map(id => d.rowOf(id)).filter(r => r !== undefined).map(r => describe(d, r));
 }
 
-module.exports = { load, available, nearest, within, downstream, traceAlong, stretch, network, describeIds, widthClass, MAJOR_KM2 };
+module.exports = { load, available, nearest, within, downstream, traceAlong, stretch, mainStem, network, describeIds, widthClass, MAJOR_KM2, INDIA_BBOX };
