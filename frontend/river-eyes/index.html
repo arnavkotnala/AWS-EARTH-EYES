@@ -1548,7 +1548,8 @@
       if (id !== siteRequest) return; // a newer click won
 
       const f = d.flow, s = d.soil, q = d.earthquakes;
-      document.getElementById('hud-health').textContent = f?.percentOfNormal != null ? `${f.percentOfNormal}%` : 'n/a';
+      document.getElementById('hud-health').textContent = f?.percentOfNormal == null ? 'n/a'
+        : f.matchQuality === 'poor' ? 'uncertain' : `${f.percentOfNormal}%`;
       document.getElementById('hud-bearing').textContent = s?.hasData ? (s.textureClass || s.wrbGroup || 'see panel') : 'no data';
       document.getElementById('hud-seismic').textContent = q ? (q.count ? `${q.count} (max M${q.strongest[0].magnitude})` : 'none') : 'n/a';
 
@@ -1565,7 +1566,8 @@
         <strong style="color:#fff;font-size:11px;">🌊 River flow</strong>
         <table style="width:100%;font-size:12px;margin:4px 0 12px;">
           ${row('Long-term mean (HydroRIVERS)', fmt(d.river?.meanDischargeCms, ' m³/s'))}
-          ${f ? row('Today (GloFAS)', `${fmt(f.todayCms, ' m³/s')} · ${fmt(f.percentOfNormal, '%')} of normal`) + row('14-day forecast peak', `${fmt(f.forecastPeakCms, ' m³/s')} (${fmt(f.peakVs2yrFlood)}× 2-yr flood)`) : row('GloFAS forecast', 'unavailable')}
+          ${f && f.matchQuality === 'poor' ? row('GloFAS forecast', 'uncertain: its ~5 km grid cell here may be a side stream') : ''}
+          ${f ? row('Today (GloFAS)', `${fmt(f.todayCms, ' m³/s')} · ${fmt(f.percentOfNormal, '%')} of normal for the season`) + row('14-day forecast peak', `${fmt(f.forecastPeakCms, ' m³/s')} (${fmt(f.peakVs2yrFlood)}× 2-yr flood)`) : row('GloFAS forecast', 'unavailable')}
         </table>
 
         <strong style="color:#fff;font-size:11px;">🧱 Soil, top 30 cm (SoilGrids)</strong>

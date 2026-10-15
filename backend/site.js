@@ -89,15 +89,14 @@ async function earthquakes(lat, lon) {
     const base = 'https://earthquake.usgs.gov/fdsnws/event/1/';
     const q = `format=geojson&latitude=${lat}&longitude=${lon}&maxradiuskm=${QUAKE_RADIUS_KM}` +
       `&minmagnitude=${QUAKE_MIN_MAG}&starttime=1970-01-01`;
-    const job = Promise.all([
-      getJson(`${base}count?${q}`, 20000),
-      getJson(`${base}query?${q}&orderby=magnitude&limit=5`, 20000),
-    ]).then(([count, list]) => ({
-      count: count.count,
+    // One request (all events, strongest first) instead of count + list; retried once if USGS is slow
+    const fetchList = () => getJson(`${base}query?${q}&orderby=magnitude&limit=500`, 25000);
+    const job = fetchList().catch(() => new Promise(r => setTimeout(r, 1500)).then(fetchList)).then(all => ({
+      count: (all.features || []).length,
       radiusKm: QUAKE_RADIUS_KM,
       minMagnitude: QUAKE_MIN_MAG,
       since: 1970,
-      strongest: (list.features || []).map(f => ({
+      strongest: (all.features || []).slice(0, 5).map(f => ({
         magnitude: f.properties.mag,
         place: String(f.properties.place || '').normalize('NFC'),
         date: new Date(f.properties.time).toISOString().slice(0, 10),
@@ -136,7 +135,10 @@ async function assess({ lat, lon }) {
     flow: flow && {
       todayCms: flow.today_cms,
       meanLast3yCms: flow.mean_last_3y_cms,
-      percentOfNormal: flow.mean_last_3y_cms > 0 ? Math.round((flow.today_cms / flow.mean_last_3y_cms) * 100) : null,
+      seasonalNormalCms: flow.seasonal_normal_cms,
+      matchQuality: flow.match_quality,
+      // vs. the same time of year in previous years (not the annual mean)
+      percentOfNormal: flow.seasonal_normal_cms > 0 ? Math.round((flow.today_cms / flow.seasonal_normal_cms) * 100) : null,
       forecastPeakCms: flow.forecast_peak_14d_cms,
       peakVs2yrFlood: flow.peak_vs_2yr_flood,
     },

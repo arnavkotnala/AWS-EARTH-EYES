@@ -61,10 +61,20 @@ function httpError(status, message) {
 }
 
 async function getJson(url, ms = 15000) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { accept: 'application/json' } });
+    // free APIs rate-limit bursts: wait and retry twice before giving up
+    if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+      await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      continue;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
 }
+
+// GloFAS history per grid cell changes once a day: cache it for 6 h
+const historyCache = new Map();
 
 const round = (v, d = 1) => (Number.isFinite(v) ? +v.toFixed(d) : null);
 const isoDay = t => new Date(t).toISOString().slice(0, 10);
@@ -136,6 +146,17 @@ async function rainfall(lat, lon) {
 }
 
 async function flowHistory(lat, lon) {
+  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  const hit = historyCache.get(key);
+  if (hit && Date.now() - hit.at < 6 * 3600e3) return hit.job;
+  const job = flowHistoryFetch(lat, lon);
+  historyCache.set(key, { at: Date.now(), job });
+  job.catch(() => historyCache.delete(key));
+  if (historyCache.size > 2000) historyCache.delete(historyCache.keys().next().value);
+  return job;
+}
+
+async function flowHistoryFetch(lat, lon) {
   const now = Date.now();
   const j = await getJson('https://flood-api.open-meteo.com/v1/flood' +
     `?latitude=${lat}&longitude=${lon}&daily=river_discharge` +
@@ -175,18 +196,26 @@ async function riverFlow(lat, lon, reach) {
 
   const pct = p => best.sorted[Math.min(best.sorted.length - 1, Math.floor(p * best.sorted.length))];
   // Median of the yearly maxima ≈ the 2-year flood: a common "bankfull" warning level.
+  // Only (nearly) complete calendar years: a partial year can miss its flood season and drag the median down.
   const years = {};
   best.time.forEach((t, i) => {
     const y = t.slice(0, 4), v = best.q[i];
-    if (Number.isFinite(v)) years[y] = Math.max(years[y] || 0, v);
+    if (!Number.isFinite(v)) return;
+    const yr = years[y] || (years[y] = { max: 0, days: 0 });
+    yr.max = Math.max(yr.max, v);
+    yr.days++;
   });
-  const maxima = Object.values(years).sort((x, y) => x - y);
+  const full = Object.values(years).filter(y => y.days >= 330);
+  const maxima = (full.length ? full : Object.values(years)).map(y => y.max).sort((x, y) => x - y);
   const twoYear = maxima[Math.floor(maxima.length / 2)];
   const todayIdx = 7;
   const peak = Math.max(...q.slice(todayIdx));
   const peakUpper = Math.max(...qmax.slice(todayIdx).filter(Number.isFinite), peak);
   return {
     today_cms: round(q[todayIdx]),
+    // "Normal" for this time of year: same calendar window (±15 days) in the previous ~3 years.
+    // Comparing with the annual mean would call every dry season a drought.
+    seasonal_normal_cms: round(seasonalNormal(best, fc.daily.time[todayIdx])),
     forecast_peak_14d_cms: round(peak),
     forecast_peak_date: fc.daily.time[todayIdx + q.slice(todayIdx).indexOf(peak)],
     ensemble_upper_peak_cms: round(peakUpper),
@@ -196,8 +225,23 @@ async function riverFlow(lat, lon, reach) {
     peak_vs_2yr_flood: twoYear ? round(peak / twoYear, 2) : null,
     grid_cell: [fc.latitude, fc.longitude],
     matched_to_river: !!(target > 0 && results.length > 1),
+    // If even the best GloFAS cell's long-term flow is >3x off the river's, the forecast may be for
+    // a side stream: say so instead of presenting it as this river's flow.
+    match_quality: !(target > 0) ? 'unknown' : Math.abs(Math.log((best.mean + 0.1) / target)) <= Math.log(3) ? 'good' : 'poor',
     source: 'GloFAS v4 (Copernicus EMS) via Open-Meteo Flood API, ~5 km grid; 2-yr flood estimated from 3 years only',
   };
+}
+
+/** Mean discharge within ±15 days of `isoDate`'s day-of-year, across the history years. */
+function seasonalNormal(hist, isoDate) {
+  const doy = t => Math.floor((Date.parse(t) - Date.UTC(+t.slice(0, 4), 0, 1)) / 864e5);
+  const target = doy(isoDate);
+  const vals = [];
+  hist.time.forEach((t, i) => {
+    const dd = Math.abs(doy(t) - target);
+    if (Math.min(dd, 365 - dd) <= 15 && Number.isFinite(hist.q[i])) vals.push(hist.q[i]);
+  });
+  return vals.length >= 20 ? vals.reduce((a, b) => a + b, 0) / vals.length : hist.mean;
 }
 
 function nearestRiver(lat, lon) {
@@ -400,12 +444,12 @@ function ruleReading(data, missing) {
     });
   }
 
-  if (f && f.mean_last_3y_cms > 0 && Number.isFinite(f.today_cms)) {
-    const r = f.today_cms / f.mean_last_3y_cms;
+  if (f && f.seasonal_normal_cms > 0 && Number.isFinite(f.today_cms)) {
+    const r = f.today_cms / f.seasonal_normal_cms;
     if (r < 0.5) {
       hazards.push({
         type: 'drought_low_flow', level: r < 0.25 ? 'high' : 'moderate', evidence_image: NO_IMAGE, confidence: 'low',
-        evidence_data: `Flow today ${f.today_cms} m³/s is ${Math.round(r * 100)}% of the 3-year mean (${f.mean_last_3y_cms} m³/s).`,
+        evidence_data: `Flow today ${f.today_cms} m³/s is ${Math.round(r * 100)}% of normal for this time of year (${f.seasonal_normal_cms} m³/s, same dates in previous years).`,
       });
     }
   }

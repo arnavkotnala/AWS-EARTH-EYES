@@ -509,6 +509,7 @@ async function analyzeLocation(lat, lng) {
     await delay(200);
 
     const formatted = formatAnalyticsResponse(analyticsData);
+    formatted.areaKm2 = (2 * radiusKm) ** 2; // the analysis box is 2r × 2r
     latestApiUpdatedAt = analyticsData?.updatedAt || null;
 
     // ---- CACHE WRITE (strict isolation) ----
@@ -761,11 +762,16 @@ function formatAnalyticsResponse(data) {
   const areaHa     = result?.area_ha || [];
   const emissions  = result?.carbon_emissions_MgCO2e || [];
 
-  const rows = years.map((year, i) => ({
-    year,
-    ha: areaHa[i] || 0,
-    emissions: emissions[i] || 0,
-  })).sort((a, b) => a.year - b.year);
+  // Sum per year: Global Nature Watch returns one row per forest class (natural / non-natural /
+  // unknown) for each year, the GFW Data API one row per year.
+  const byYear = new Map();
+  years.forEach((year, i) => {
+    const r = byYear.get(year) || { year, ha: 0, emissions: 0 };
+    r.ha += Number(areaHa[i]) || 0;
+    r.emissions += Number(emissions[i]) || 0;
+    byYear.set(year, r);
+  });
+  const rows = [...byYear.values()].sort((a, b) => a.year - b.year);
 
   const totalHa        = rows.reduce((s, r) => s + r.ha, 0);
   const totalEmissions = rows.reduce((s, r) => s + r.emissions, 0);
@@ -777,7 +783,10 @@ function formatAnalyticsResponse(data) {
 // =============================================
 // SEVERITY ENGINE
 // =============================================
-function getSeverityLevel(totalHa) {
+// Thresholds are for the default 20 × 20 km box (10 km radius, 400 km²); other box sizes are scaled
+// to it, so a 50 km radius (10,000 km²) needs 25× more loss for the same rating.
+function getSeverityLevel(totalHa, areaKm2 = 400) {
+  totalHa = totalHa * (400 / Math.max(1, areaKm2));
   if (totalHa > 100) return {
     level: 'VERY HIGH DEFORESTATION',
     color: 'red',
@@ -804,11 +813,15 @@ function getSeverityLevel(totalHa) {
   };
 }
 
+// A growing tree absorbs ~0.021 t CO2 a year, ~0.84 t over ~40 years; ~60 % of seedlings survive.
+// Planting goal = enough seedlings to re-absorb the emitted CO2 over 40 years, or to replant the
+// cleared area at 400 trees/ha, whichever is larger. (The old formula divided by ONE year's uptake.)
+const CO2_PER_TREE_T = 0.021 * 40;
+const SEEDLING_SURVIVAL = 0.6;
 function calculateTreesNeeded(totalEmissions, totalHa) {
-  const matureTrees = Math.ceil(totalEmissions / 0.021);
-  const plantingGoal = Math.ceil(matureTrees * 3.5);
-  const areaBasedEstimate = Math.ceil(totalHa * 400);
-  return Math.max(plantingGoal, areaBasedEstimate);
+  const offsetGoal = Math.ceil(totalEmissions / CO2_PER_TREE_T / SEEDLING_SURVIVAL);
+  const replantGoal = Math.ceil(totalHa * 400);
+  return Math.max(offsetGoal, replantGoal);
 }
 
 // =============================================
@@ -817,7 +830,7 @@ function calculateTreesNeeded(totalEmissions, totalHa) {
 // =============================================
 function renderDeforestationResults(lat, lng, locationName, data, source) {
   const { rows, totalHa, totalEmissions, treesNeeded } = data;
-  const severity = getSeverityLevel(totalHa);
+  const severity = getSeverityLevel(totalHa, data.areaKm2);
 
   $resultLocationName.textContent = `📍 ${locationName}`;
 
