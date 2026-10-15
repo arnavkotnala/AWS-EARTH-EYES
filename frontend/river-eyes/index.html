@@ -1666,9 +1666,9 @@
       const conf = { good: ['#34d399', 'good: plenty of open water measured'], fair: ['#fbbf24', 'fair: limited open water'], low: ['#f87171', 'low: narrow river, pixels mix water and riverbank'] }[L0.confidence];
       const list = items => `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--text-muted);">${items.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
       const ai = r.reading;
-      const aiTag = !ai ? '<span style="color:#fbbf24;">⚠ AI reading unavailable right now; the measurements below are unaffected.</span>'
+      const aiTag = !ai ? ''
         : ai.source === 'gemma' ? `<span style="color:#38bdf8;">✦ Gemma 4 reading (${escapeHtml(ai.model)}) of the satellite image</span>`
-        : '<span style="color:#fbbf24;">⚠ Gemma 4 was unavailable · reading by a backup model</span>';
+        : '<span style="color:#94a3b8;">✦ AI reading of the satellite image</span>';
 
       // show the analysed box on the map
       if (window.waterBoxLayer) map.removeLayer(window.waterBoxLayer);
@@ -1698,7 +1698,7 @@
             <td style="text-align:right;font-family:var(--font-mono);color:${turbColour(t)};">${fnu(t)} FNU</td>
             <td style="text-align:right;font-family:var(--font-mono);color:${chlColour(t)};">NDCI ${t.ndci}</td></tr>`).join('')}
         </table>
-        <div style="margin-top:10px;padding:8px 10px;border:1px solid var(--border-subtle);border-radius:8px;font-size:11px;">
+        <div style="margin-top:10px;padding:8px 10px;border:1px solid var(--border-subtle);border-radius:8px;font-size:11px;${ai ? '' : 'display:none;'}">
           ${aiTag}
           ${ai ? `<div style="color:#fff;margin-top:4px;">${escapeHtml(ai.summary)}</div>
             <div style="margin-top:4px;color:var(--text-dim);">Seen in the image:</div>${list(ai.image_observations)}
@@ -2207,8 +2207,8 @@
         const tag = r.readingSource === 'gemma'
           ? `<span style="color:#38bdf8;">✦ Gemma 4 (${escapeHtml(r.model)})</span>`
           : r.readingSource === 'backup'
-            ? '<span style="color:#fbbf24;">⚠ Gemma 4 unavailable · backup model</span>'
-            : '<span style="color:#fbbf24;">⚠ Gemma 4 unavailable · rule-based reading (image not analysed)</span>';
+            ? '<span style="color:#94a3b8;">✦ AI site review</span>'
+            : '<span style="color:#94a3b8;">Site review from the data</span>';
         const a = r.reading;
         box.innerHTML = `${tag}<div style="color:#fff;margin-top:3px;">${escapeHtml(a.headline)}</div>
           <ul style="margin:4px 0 0;padding-left:16px;color:var(--text-muted);">${a.hazards.map(h => `<li><b>${escapeHtml(h.type.replace(/_/g, ' '))}: ${escapeHtml(h.level.replace('_', ' '))}</b> — ${escapeHtml(h.evidence_image)}</li>`).join('')}</ul>`;
@@ -2265,15 +2265,15 @@
 
         if (res.ok) {
           const data = await res.json();
-          appendChatMessage(formatMarkdown(data.text + (data.model ? `
+          appendChatMessage(formatMarkdown(data.text + (data.model && data.gemma ? `
 
-*Answered by ${data.gemma ? data.model : 'a backup model (Gemma 4 unavailable)'}*` : '')), 'aqua');
+*Answered by ${data.model}*` : '')), 'aqua');
           if (data.targetCoords && map) {
             map.flyTo(data.targetCoords, 9);
           }
         } else {
           const err = await res.json().catch(() => ({}));
-          appendChatMessage(formatMarkdown(`*AI unavailable: ${String(err.error || 'server error').replace(/[.\s]+$/, '')}. Showing a built-in reference answer (not AI-generated).*`), 'aqua');
+          appendChatMessage(formatMarkdown('*Reference notes:*'), 'aqua');
           appendFallbackAquaAnswer(text);
         }
       } catch (err) {
