@@ -20,6 +20,7 @@ const gemma = require('./gemma.js');
 const rivers = require('./rivers.js');
 const brain = require('./forest-eyes-final/treeko-brain.js');
 const terrainTiles = require('./elevation.js');
+const soilIndia = require('./soil.js');
 
 const IMG_SPAN_DEG = 0.06;   // ~6.5 km wide at the equator
 const IMG_PX = 768;
@@ -218,6 +219,17 @@ function nearestRiver(lat, lon) {
 }
 
 async function soil(lat, lon) {
+  // India: instant lookup from the local grid; elsewhere the SoilGrids API
+  if (soilIndia.inside(lat, lon)) {
+    const s = soilIndia.lookup(lat, lon, 8);
+    if (!s) return null;
+    return {
+      summary: `${s.textureClass} topsoil (0-30 cm): clay ${s.clayPct}%, silt ${s.siltPct}%, sand ${s.sandPct}%, ` +
+        `stones ${s.coarseFragmentsPct} vol%, bulk density ${s.bulkDensity} kg/dm3, organic carbon ${s.organicCarbonGkg} g/kg, pH ${s.pH}` +
+        (s.distanceKm ? ` (nearest soil data ${s.distanceKm} km away; the point itself is water, rock or built-up)` : ''),
+      source: s.source,
+    };
+  }
   const s = await brain.getSoil(lat, lon, fetch, 20000);
   if (!s?.hasData) return null;
   return { summary: s.text.slice(0, 1500), source: 'ISRIC SoilGrids 2.0 (modelled, 250 m)' };

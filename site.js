@@ -15,6 +15,7 @@
 
 const rivers = require('./rivers.js');
 const hazard = require('./hazard.js');
+const soilIndia = require('./soil.js');
 
 const SOILGRIDS = 'https://rest.isric.org/soilgrids/v2.0';
 const SOIL_PROPS = ['clay', 'sand', 'silt', 'cfvo', 'bdod', 'soc'];
@@ -37,6 +38,11 @@ async function getJson(url, ms) {
 
 /** Mean of the top 30 cm (depth-weighted), in real units. */
 async function soil(lat, lon) {
+  // India: instant lookup from the local SoilGrids grid (nearest soil cell for towns and rivers)
+  if (soilIndia.inside(lat, lon)) {
+    const s = soilIndia.lookup(lat, lon, 8);
+    return s ? { ...s, wrbGroup: null, wrbTop: [] } : { hasData: false };
+  }
   const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
   if (!soilCache.has(key)) {
     const q = new URLSearchParams({ lon: String(lon), lat: String(lat), value: 'mean' });
@@ -144,7 +150,7 @@ async function assess({ lat, lon }) {
     sources: [
       'HydroRIVERS v1.0 (HydroSHEDS)',
       'GloFAS v4 (Copernicus EMS) via Open-Meteo',
-      'ISRIC SoilGrids 2.0 (modelled, 250 m, top 30 cm)',
+      soilIndia.inside(point[0], point[1]) ? 'ISRIC SoilGrids 2.0 (India grid, ~2 km, top 30 cm)' : 'ISRIC SoilGrids 2.0 (modelled, 250 m, top 30 cm)',
       `USGS ComCat earthquakes M${QUAKE_MIN_MAG}+ within ${QUAKE_RADIUS_KM} km since 1970`,
     ],
   };

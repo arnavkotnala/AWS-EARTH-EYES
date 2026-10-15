@@ -67,43 +67,59 @@ function decodePng(buf) {
   return out;
 }
 
-function tile(x, y) {
-  const key = `${x}/${y}`;
+function tile(x, y, z = ZOOM) {
+  const key = `${z}/${x}/${y}`;
   if (!tiles.has(key)) {
     if (tiles.size >= MAX_TILES) tiles.delete(tiles.keys().next().value);
-    const job = fetch(URL(ZOOM, x, y), { signal: AbortSignal.timeout(15000) })
-      .then(r => { if (!r.ok) throw new Error(`terrain tile HTTP ${r.status}`); return r.arrayBuffer(); })
-      .then(b => decodePng(Buffer.from(b)));
+    // Up to 3 attempts: one dropped connection must not fail a whole analysis
+    const job = (async () => {
+      let lastErr;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await fetch(URL(z, x, y), { signal: AbortSignal.timeout(15000) });
+          if (!r.ok) throw new Error(`terrain tile HTTP ${r.status}`);
+          return decodePng(Buffer.from(await r.arrayBuffer()));
+        } catch (err) {
+          lastErr = err;
+          await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
+        }
+      }
+      throw lastErr;
+    })();
     job.catch(() => tiles.delete(key)); // retry next time
     tiles.set(key, job);
   }
   return tiles.get(key);
 }
 
-/** Web-Mercator pixel position of a point at ZOOM. */
-function pixel(lat, lon) {
-  const n = 2 ** ZOOM * TILE;
+/** Web-Mercator pixel position of a point at zoom z. */
+function pixel(lat, lon, z = ZOOM) {
+  const n = 2 ** z * TILE;
   const x = ((lon + 180) / 360) * n;
   const s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180);
   const y = (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n;
   return [x, y];
 }
 
-async function sample(px, py) {
+async function sample(px, py, z = ZOOM) {
   const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE);
-  const t = await tile(tx, ty);
+  const t = await tile(tx, ty, z);
   const ix = Math.min(TILE - 1, Math.max(0, Math.floor(px - tx * TILE)));
   const iy = Math.min(TILE - 1, Math.max(0, Math.floor(py - ty * TILE)));
   return t[iy * TILE + ix];
 }
 
-/** Elevations (m) for [[lat, lon], ...], bilinear between the 4 nearest pixels. */
-async function elevations(points) {
+/**
+ * Elevations (m) for [[lat, lon], ...], bilinear between the 4 nearest pixels.
+ * zoom 12 ≈ 38 m pixels (default); lower zooms are coarser but need far fewer tiles
+ * (zoom 9 ≈ 300 m, used to pre-screen whole regions).
+ */
+async function elevations(points, z = ZOOM) {
   return Promise.all(points.map(async ([lat, lon]) => {
-    const [x, y] = pixel(lat, lon);
+    const [x, y] = pixel(lat, lon, z);
     const x0 = Math.floor(x - 0.5), y0 = Math.floor(y - 0.5);
     const fx = x - 0.5 - x0, fy = y - 0.5 - y0;
-    const [a, b, c, d] = await Promise.all([sample(x0, y0), sample(x0 + 1, y0), sample(x0, y0 + 1), sample(x0 + 1, y0 + 1)]);
+    const [a, b, c, d] = await Promise.all([sample(x0, y0, z), sample(x0 + 1, y0, z), sample(x0, y0 + 1, z), sample(x0 + 1, y0 + 1, z)]);
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
   }));
 }

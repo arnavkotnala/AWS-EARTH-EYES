@@ -198,6 +198,20 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // City planner: dam sites to supply a city's demand (/api/v1/dam/plan) — { city, lat, lon, targetMw, radiusKm }
+  if (url.pathname === '/api/v1/dam/plan' && req.method === 'POST') {
+    try {
+      const result = await dam.plan(JSON.parse(await readBody(req, 4 * 1024) || '{}'));
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify(result));
+    } catch (err) {
+      const status = err.status || (err instanceof SyntaxError ? 400 : 502);
+      if (status >= 500) console.warn('[dam plan]', err.message);
+      res.writeHead(status, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.status || err instanceof SyntaxError ? err.message : 'Planning failed (elevation or river data unavailable). Try again.' }));
+    }
+  }
+
   // Hydropower site screening along the real river (/api/v1/dam/screen)
   if (url.pathname === '/api/v1/dam/screen' && req.method === 'POST') {
     try {
