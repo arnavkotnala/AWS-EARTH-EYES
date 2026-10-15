@@ -1438,6 +1438,47 @@
         riverPolylines[key] = polyline;
       }
       loadRealRiverGeometry();
+      map.on('moveend', snapRiverHighlights);
+    }
+
+    // Close up (zoom ≥ 9) the traced channels can sit a few hundred metres off the real river,
+    // so the visible part is re-centred on the water (server: water-snap.js, JRC surface water).
+    let snapRequest = 0;
+    async function snapRiverHighlights() {
+      const id = ++snapRequest;
+      const z = map.getZoom();
+      const entries = Object.entries(WORLD_RIVERS_REGISTRY).filter(([k, r]) => r.traced && riverPolylines[k]);
+      if (z < 9) {
+        for (const [k, r] of entries) if (r.snapped) { riverPolylines[k].setLatLngs(r.traced.path); r.snapped = false; }
+        return;
+      }
+      const b = map.getBounds();
+      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+      const padX = (bbox[2] - bbox[0]) * 0.25, padY = (bbox[3] - bbox[1]) * 0.25;
+      const inBox = ([la, lo]) => lo >= bbox[0] - padX && lo <= bbox[2] + padX && la >= bbox[1] - padY && la <= bbox[3] + padY;
+      for (const [k, r] of entries) {
+        // the stretches of this river inside the (padded) view, kept as separate pieces
+        const runs = [];
+        let run = [];
+        for (const pt of r.traced.path) {
+          if (inBox(pt)) run.push(pt);
+          else if (run.length) { if (run.length > 1) runs.push(run); run = []; }
+        }
+        if (run.length > 1) runs.push(run);
+        if (!runs.length) continue;
+        try {
+          const res = await fetch('/api/v1/rivers/snap', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lines: runs.slice(0, 20), bbox: [bbox[0] - padX, bbox[1] - padY, bbox[2] + padX, bbox[3] + padY], z }),
+          });
+          if (!res.ok || id !== snapRequest) return;
+          const { lines } = await res.json();
+          if (id !== snapRequest) return;
+          if (lines && lines.length) { riverPolylines[k].setLatLngs(lines); r.snapped = true; }
+        } catch {
+          return; // offline: keep the traced line
+        }
+      }
     }
 
     // Swap the hand-drawn sketches for the real channels traced through HydroRIVERS (server: rivers.js)
@@ -1458,6 +1499,7 @@
           if (key === activeRiverId) { renderRiverHud(r); loadRiverSite(r); }
           line.setTooltipContent(`<strong>${r.name}</strong><br/>${r.basin}<br/><span style="opacity:.7">Channel: HydroRIVERS (${traced.lengthKm.toLocaleString()} km traced)</span>`);
         }
+        snapRiverHighlights();
       } catch {
         // offline / opened as a file: keep the sketch lines
       }

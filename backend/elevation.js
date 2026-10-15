@@ -19,7 +19,8 @@ const SOURCE = 'AWS Terrain Tiles (Mapzen/Tilezen: SRTM, GMTED, ETOPO1 and natio
 const tiles = new Map(); // key → Promise<Float32Array>
 const MAX_TILES = 200;   // Int16 tiles: ~26 MB worst case (the free host has 512 MB in total)
 
-function decodePng(buf) {
+/** PNG → raw pixels { width, height, bpp, px } (8-bit RGB/RGBA). Also used for JRC water tiles. */
+function decodePngPixels(buf) {
   if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
   let off = 8, width, height, bitDepth, colorType;
   const idat = [];
@@ -60,6 +61,12 @@ function decodePng(buf) {
       px[dst + i] = v & 255;
     }
   }
+  return { width, height, bpp, px };
+}
+
+/** Terrarium PNG → elevations. */
+function decodePng(buf) {
+  const { width, height, bpp, px } = decodePngPixels(buf);
   const out = new Int16Array(width * height); // whole metres: enough, and half the memory
   for (let i = 0; i < width * height; i++) {
     out[i] = Math.round(px[i * bpp] * 256 + px[i * bpp + 1] + px[i * bpp + 2] / 256 - 32768);
@@ -124,4 +131,4 @@ async function elevations(points, z = ZOOM) {
   }));
 }
 
-module.exports = { elevations, SOURCE, decodePng };
+module.exports = { elevations, SOURCE, decodePng, decodePngPixels };

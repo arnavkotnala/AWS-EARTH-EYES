@@ -47,6 +47,7 @@ const hazard = require('./hazard.js');
 const dam = require('./dam.js');
 const site = require('./site.js');
 const water = require('./water.js');
+const waterSnap = require('./water-snap.js');
 const rivers = require('./rivers.js');
 const traceCache = new Map();
 const networkCache = new Map();
@@ -326,7 +327,11 @@ const server = http.createServer(async (req, res) => {
     const key = `${z}|${w},${s},${e},${n}|${[...classes].sort().join('')}`;
     let gz = networkCache.get(key);
     if (!gz) {
-      gz = zlib.gzipSync(JSON.stringify(rivers.network([w, s, e, n], z, classes)));
+      const net = rivers.network([w, s, e, n], z, classes);
+      // Close up, centre the lines on the real water (JRC surface water); the 15" source lines
+      // can sit a few hundred metres off the channel, invisible when zoomed out.
+      if (z >= 9) await waterSnap.snapNetwork(net, z, [w, s, e, n]).catch(err => console.warn('[rivers] water snap skipped:', err.message));
+      gz = zlib.gzipSync(JSON.stringify(net));
       if (networkCache.size > 300) networkCache.delete(networkCache.keys().next().value);
       networkCache.set(key, gz);
     }
@@ -353,6 +358,28 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ rivers: out, source: 'HydroRIVERS v1.0 (HydroSHEDS)' }));
+    } catch (err) {
+      res.writeHead(err.status || 400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  // Snap a drawn river onto its real water for a close-up view (/api/v1/rivers/snap)
+  // { lines: [[[lat, lon], ...], ...], bbox: [w, s, e, n], z } → { lines } (only the parts in the box)
+  if (url.pathname === '/api/v1/rivers/snap' && req.method === 'POST') {
+    try {
+      const { lines, bbox, z } = JSON.parse(await readBody(req, 1024 * 1024) || '{}');
+      const zoom = Math.round(Number(z));
+      const okLine = l => Array.isArray(l) && l.length >= 2 && l.length <= 20000 && l.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
+      if (!Array.isArray(lines) || !lines.length || lines.length > 20 || !lines.every(okLine)
+        || !Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(Number.isFinite)
+        || bbox[2] - bbox[0] > 4 || bbox[3] - bbox[1] > 4 || !(zoom >= 9 && zoom <= 18)) {
+        throw Object.assign(new Error('lines (≤ 20), bbox (≤ 4°) and z ≥ 9 are required'), { status: 400 });
+      }
+      const net = { lines: { 5: lines } };
+      await waterSnap.snapNetwork(net, zoom, bbox);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ lines: net.lines[5], source: 'JRC Global Surface Water (2021)' }));
     } catch (err) {
       res.writeHead(err.status || 400, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: err.message }));
