@@ -129,6 +129,44 @@
     return dst;
   }
 
+  /**
+   * The slow part of the globe heatmap (blurring) does not depend on Sensitivity, so it is done
+   * once per tile: density (blurred loss) and presence (raw alpha) are cached.
+   */
+  function tileDensity(rgba, w, h) {
+    const a = new Float32Array(w * h);
+    for (let i = 0; i < a.length; i++) a[i] = (rgba[i * 4] / 255) * (rgba[i * 4 + 3] / 255);
+    const density = boxBlur(boxBlur(a, w, h, 1), w, h, 1);
+    const presence = new Float32Array(w * h);
+    for (let i = 0; i < presence.length; i++) presence[i] = rgba[i * 4 + 3] / 255;
+    return { density, presence };
+  }
+
+  // Colour ramp as a table (it is smooth, so 1024 steps are exact to within 1/255). The
+  // sensitivity curve itself is computed exactly per pixel: it is steep near its floor.
+  const RAMP_SIZE = 1024;
+  const rampTable = new Uint8ClampedArray(RAMP_SIZE * 3);
+  for (let k = 0; k < RAMP_SIZE; k++) rampTable.set(rampRgb(k / (RAMP_SIZE - 1)), k * 3);
+  let lutGain = null; // gain the globe overlay was last rendered with
+
+  /** Cached tile density → heat RGBA: plain arithmetic, no allocations, fast enough while dragging. */
+  function densityToHeatRgba({ density, presence }, out) {
+    const pw = presenceWeight();
+    const { gain, floor, gamma } = CONFIG;
+    const top = RAMP_SIZE - 1;
+    for (let i = 0; i < density.length; i++) {
+      let v = Math.min(1, density[i] + pw * presence[i]) * gain;          // = densityToHeat(), inlined
+      v = v <= floor ? 0 : (v >= 1 ? 1 : (v - floor) / (1 - floor));
+      const t = v > 0 ? Math.pow(v, gamma) : 0;
+      const k = ((t * top + 0.5) | 0) * 3;
+      const o = i * 4;
+      out[o] = rampTable[k]; out[o + 1] = rampTable[k + 1]; out[o + 2] = rampTable[k + 2];
+      out[o + 3] = Math.round(Math.min(1, t * 2) * 255);
+    }
+    lutGain = gain;
+    return out;
+  }
+
   /** Loss tile RGBA (alpha = loss present) → heat RGBA, for the 3D globe. */
   function lossToHeatRgba(rgba, w, h, out = new Uint8ClampedArray(w * h * 4)) {
     const a = new Float32Array(w * h);
@@ -204,9 +242,51 @@
           <feFuncB id="fw-heat-b" type="table"/>
           <feFuncA id="fw-heat-a" type="table"/>
         </feComponentTransfer>
+      </filter>
+      <!-- Colour form (2D): same recipe as the 3D globe. Blurred loss density x4 picks the
+           colour (yellow → orange → red); alpha = every loss pixel ~0.85 plus density glow. -->
+      <filter id="fw-colour-loss" ${region} color-interpolation-filters="sRGB">
+        <feColorMatrix in="SourceGraphic" type="matrix" result="redAsAlpha"
+          values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 0"/>
+        <feComposite in="redAsAlpha" in2="SourceGraphic" operator="in" result="mask"/>
+        <feGaussianBlur id="fw-colour-blur" in="mask" stdDeviation="${colourBlurForZoom(3)}" result="blur"/>
+        <feColorMatrix in="blur" type="matrix" result="dens"
+          values="0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 0 1"/>
+        <feComponentTransfer in="dens" result="rgb">
+          <feFuncR type="table" tableValues="${table(x => colourRgb(x)[0] / 255)}"/>
+          <feFuncG type="table" tableValues="${table(x => colourRgb(x)[1] / 255)}"/>
+          <feFuncB type="table" tableValues="${table(x => colourRgb(x)[2] / 255)}"/>
+        </feComponentTransfer>
+        <feComponentTransfer in="blur" result="alphaDensity">
+          <feFuncA type="table" tableValues="${table(x => Math.min(0.7, x * 3))}"/>
+        </feComponentTransfer>
+        <feComponentTransfer in="SourceGraphic" result="alphaPresence">
+          <feFuncA type="discrete" tableValues="0 ${Array(49).fill('0.85').join(' ')}"/>
+        </feComponentTransfer>
+        <feComposite in="alphaDensity" in2="alphaPresence" operator="arithmetic" k1="0" k2="1" k3="1" k4="0" result="alpha"/>
+        <feComposite in="rgb" in2="alpha" operator="in"/>
       </filter>`;
     document.body.appendChild(svg);
     updateHeatTables();
+  }
+
+  // Colour form palette and blur: same as globe-layers.js (CONFIG.colourGain 4, blur ~2 px)
+  const COLOUR_STOPS = [[0, [255, 209, 102]], [0.5, [255, 152, 0]], [1, [244, 67, 54]]]; // #ffd166 #ff9800 #f44336
+  function colourRgb(d) {
+    const x = Math.min(1, Math.max(0, d * 4));
+    for (let s = 1; s < COLOUR_STOPS.length; s++) {
+      const [t1, b] = COLOUR_STOPS[s];
+      if (x <= t1) {
+        const [t0, a] = COLOUR_STOPS[s - 1];
+        const f = (x - t0) / (t1 - t0);
+        return a.map((v, i) => Math.round(v + (b[i] - v) * f));
+      }
+    }
+    return COLOUR_STOPS[COLOUR_STOPS.length - 1][1];
+  }
+  function colourBlurForZoom(z) {
+    // ~2 px of tile data; tiles are upscaled beyond their native zoom, so the blur grows with them
+    return Math.min(16, 2 * Math.pow(2, Math.max(0, z - CONFIG.maxNativeZoom)));
   }
 
   function blurForZoom(z) {
@@ -224,6 +304,7 @@
   function updateBlur() {
     const z = typeof map.getZoom === 'function' ? map.getZoom() : 3;
     document.getElementById('fw-heat-blur')?.setAttribute('stdDeviation', blurForZoom(z));
+    document.getElementById('fw-colour-blur')?.setAttribute('stdDeviation', colourBlurForZoom(z));
   }
 
   /** (Re)writes the colour lookup tables, e.g. after the sensitivity changes. */
@@ -260,8 +341,17 @@
       zIndex: 5,
       attribution: 'Tree Cover Loss &copy; UMD/Hansen/Google/USGS/NASA',
     });
+  // Colour form (2D): the same loss tiles again, recoloured with the Colour form palette.
+  const colourLoss = L.tileLayer(
+    (typeof treeLossLayer !== 'undefined' && treeLossLayer._url) || CONFIG.lossUrl, {
+      maxNativeZoom: CONFIG.maxNativeZoom,
+      maxZoom: 19,
+      zIndex: 5,
+      attribution: 'Tree Cover Loss &copy; UMD/Hansen/Google/USGS/NASA',
+    });
   tagContainer(heatBase, 'fw-heat-base');
   tagContainer(heatLoss, 'fw-heat-loss');
+  tagContainer(colourLoss, 'fw-colour-loss');
 
   function tagAppLayers() {
     [typeof satelliteBase !== 'undefined' && satelliteBase,
@@ -411,45 +501,158 @@
     });
   }
 
-  function renderGlobeOverlay() {
-    if (typeof THREE === 'undefined' || !globeScene || !globeTiles?.length) return;
+  // ---------------------------------------------------------------------
+  // Globe heat overlay on the GPU. The blurred loss density is uploaded once as a float texture;
+  // a shader applies the Sensitivity curve and the colour ramp per pixel. Moving the slider only
+  // changes a uniform, so there is no CPU work while dragging. If the GPU path fails, the CPU
+  // path below recolours a canvas instead (slower, used only on slider release).
+  // ---------------------------------------------------------------------
+  let gpuFailed = false;
+  let mercCanvas = null, eqCanvas = null, tileImage = null;
+
+  /** Web Mercator tile grid → equirectangular float rows (north first), density + presence. */
+  function buildEquirectDensity() {
+    const n = 2 ** CONFIG.globeZoom;
+    const W = 256 * n, H = W / 2;
+    const mercD = new Float32Array(W * W), mercP = new Float32Array(W * W);
+    globeTiles.forEach(tile => {
+      if (!tile.heat) tile.heat = tileDensity(tile.raw, 256, 256); // blurred once, then cached
+      const { density, presence } = tile.heat;
+      for (let r = 0; r < 256; r++) {
+        const dst = (tile.y * 256 + r) * W + tile.x * 256;
+        mercD.set(density.subarray(r * 256, r * 256 + 256), dst);
+        mercP.set(presence.subarray(r * 256, r * 256 + 256), dst);
+      }
+    });
+    // Texture row 0 is the SOUTH edge (DataTexture is not flipped), so write rows bottom-up.
+    const data = new Float32Array(W * H * 2);
+    for (let j = 0; j < H; j++) {
+      const lat = Math.max(Math.min(90 - ((j + 0.5) / H) * 180, 85.0511), -85.0511) * Math.PI / 180;
+      const my = Math.min(Math.floor((1 - Math.log(Math.tan(Math.PI / 4 + lat / 2)) / Math.PI) / 2 * W), W - 1);
+      const out = (H - 1 - j) * W * 2;
+      for (let x = 0; x < W; x++) {
+        data[out + 2 * x] = mercD[my * W + x];
+        data[out + 2 * x + 1] = mercP[my * W + x];
+      }
+    }
+    return { data, W, H };
+  }
+
+  function rampTexture() {
+    const rgba = new Uint8Array(RAMP_SIZE * 4);
+    for (let k = 0; k < RAMP_SIZE; k++) {
+      rgba[k * 4] = rampTable[k * 3]; rgba[k * 4 + 1] = rampTable[k * 3 + 1]; rgba[k * 4 + 2] = rampTable[k * 3 + 2]; rgba[k * 4 + 3] = 255;
+    }
+    const tex = new THREE.DataTexture(rgba, RAMP_SIZE, 1, THREE.RGBAFormat);
+    tex.magFilter = tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function buildGpuOverlay() {
+    const { data, W, H } = buildEquirectDensity();
+    const density = new THREE.DataTexture(data, W, H, THREE.RGFormat, THREE.FloatType);
+    density.magFilter = density.minFilter = THREE.NearestFilter; // float linear filtering is not guaranteed
+    density.needsUpdate = true;
+    const material = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        density: { value: density },
+        ramp: { value: rampTexture() },
+        gain: { value: CONFIG.gain },
+        floorV: { value: CONFIG.floor },
+        gamma: { value: CONFIG.gamma },
+        pw: { value: presenceWeight() },
+      },
+      vertexShader: `varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      // Same maths as densityToHeat(); the ramp holds sRGB colours, written out as-is
+      // (like the previous sRGB canvas texture on a basic material).
+      fragmentShader: `uniform sampler2D density; uniform sampler2D ramp;
+        uniform float gain; uniform float floorV; uniform float gamma; uniform float pw;
+        varying vec2 vUv;
+        void main() {
+          vec2 dp = texture2D(density, vUv).rg;
+          float v = clamp(min(1.0, dp.r + pw * dp.g) * gain, 0.0, 1.0);
+          v = max(0.0, (v - floorV) / (1.0 - floorV));
+          float t = v > 0.0 ? pow(v, gamma) : 0.0;
+          vec3 c = texture2D(ramp, vec2(t * ${(RAMP_SIZE - 1) / RAMP_SIZE} + ${0.5 / RAMP_SIZE}, 0.5)).rgb;
+          gl_FragColor = vec4(c, min(1.0, t * 2.0));
+        }`,
+    });
+    globeOverlay = new THREE.Mesh(new THREE.SphereGeometry(1.003, 64, 64), material);
+    globeOverlay.renderOrder = 2;
+    globeOverlay.userData.gpu = true;
+    globeScene.earth.add(globeOverlay); // child of earth → rotates with it
+    // Compile now and confirm the shader really runs; otherwise fall back to the CPU path.
+    const { renderer, scene, camera } = globeScene;
+    if (!renderer.capabilities.isWebGL2) throw new Error('WebGL2 not available');
+    renderer.compile(scene, camera);
+    const program = renderer.properties.get(material).currentProgram;
+    if (program?.diagnostics && program.diagnostics.runnable === false) throw new Error('shader did not compile');
+  }
+
+  /** CPU fallback: recolour into a canvas texture (slow; only used if the GPU path fails). */
+  function renderCpuOverlay() {
     const z = CONFIG.globeZoom;
     const n = 2 ** z;
-    const merc = document.createElement('canvas');
-    merc.width = merc.height = 256 * n;
-    const mctx = merc.getContext('2d');
-    globeTiles.forEach(({ x, y, raw }) => {
-      const img = mctx.createImageData(256, 256);
-      lossToHeatRgba(raw, 256, 256, img.data);
-      mctx.putImageData(img, x * 256, y * 256);
+    if (!mercCanvas) {
+      mercCanvas = document.createElement('canvas');
+      mercCanvas.width = mercCanvas.height = 256 * n;
+    }
+    const mctx = mercCanvas.getContext('2d');
+    if (!tileImage) tileImage = mctx.createImageData(256, 256);
+    globeTiles.forEach(tile => {
+      if (!tile.heat) tile.heat = tileDensity(tile.raw, 256, 256);
+      densityToHeatRgba(tile.heat, tileImage.data);
+      mctx.putImageData(tileImage, tile.x * 256, tile.y * 256);
     });
-
-    // Web Mercator → equirectangular, one row at a time.
-    const W = 256 * n;
-    const H = W / 2;
-    const eq = document.createElement('canvas');
-    eq.width = W;
-    eq.height = H;
-    const ectx = eq.getContext('2d');
+    const W = 256 * n, H = W / 2;
+    if (!eqCanvas) {
+      eqCanvas = document.createElement('canvas');
+      eqCanvas.width = W;
+      eqCanvas.height = H;
+    }
+    const ectx = eqCanvas.getContext('2d');
+    ectx.clearRect(0, 0, W, H);
     for (let j = 0; j < H; j++) {
       const lat = Math.max(Math.min(90 - ((j + 0.5) / H) * 180, 85.0511), -85.0511) * Math.PI / 180;
       const my = (1 - Math.log(Math.tan(Math.PI / 4 + lat / 2)) / Math.PI) / 2 * W;
-      ectx.drawImage(merc, 0, Math.min(Math.floor(my), W - 1), W, 1, 0, j, W, 1);
+      ectx.drawImage(mercCanvas, 0, Math.min(Math.floor(my), W - 1), W, 1, 0, j, W, 1);
     }
-
     if (!globeOverlay) {
-      const texture = new THREE.CanvasTexture(eq);
+      const texture = new THREE.CanvasTexture(eqCanvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       globeOverlay = new THREE.Mesh(
         new THREE.SphereGeometry(1.003, 64, 64),
         new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false })
       );
       globeOverlay.renderOrder = 2;
-      globeScene.earth.add(globeOverlay); // child of earth → rotates with it
+      globeScene.earth.add(globeOverlay);
     } else {
-      globeOverlay.material.map.image = eq;
       globeOverlay.material.map.needsUpdate = true;
     }
+  }
+
+  function renderGlobeOverlay() {
+    if (typeof THREE === 'undefined' || !globeScene || !globeTiles?.length) return;
+    if (!gpuFailed && (!globeOverlay || globeOverlay.userData.gpu)) {
+      try {
+        if (!globeOverlay) buildGpuOverlay();
+        const u = globeOverlay.material.uniforms;
+        u.gain.value = CONFIG.gain;
+        u.pw.value = presenceWeight();
+        lutGain = CONFIG.gain;
+        globeOverlay.visible = monoActive;
+        return;
+      } catch (err) {
+        console.warn('[heatmap] GPU globe overlay unavailable, using the CPU path:', err.message);
+        gpuFailed = true;
+        if (globeOverlay) { globeScene.earth.remove(globeOverlay); globeOverlay = null; }
+      }
+    }
+    renderCpuOverlay();
     globeOverlay.visible = monoActive;
   }
 
@@ -470,17 +673,37 @@
     <div class="fw-heatmap-legend-note">Water is blue. Tree cover loss 2001–2024 (all years),
       UMD/Hansen via Global Forest Watch. Raise the sensitivity if it looks all green, lower it if large areas turn red.</div>`;
   document.body.appendChild(legend);
-  legend.querySelector('input[type="range"]')?.addEventListener('input', e => {
+  // The slider fires dozens of 'input' events per second. Recolouring the map (SVG filter) is
+  // coalesced to one update per frame; the 3D globe is recoloured on the GPU (instant), or, on the
+  // CPU fallback, once when the slider is released.
+  let tablesFrame = 0, globeTimer = 0;
+  function scheduleHeatUpdate(final) {
+    if (!tablesFrame) {
+      tablesFrame = requestAnimationFrame(() => { tablesFrame = 0; updateHeatTables(); });
+    }
+    if (!globeTiles?.length || !globeOverlay?.visible) return;
+    if (globeOverlay.userData.gpu) { renderGlobeOverlay(); return; } // uniforms only: instant
+    clearTimeout(globeTimer);
+    if (final) globeTimer = setTimeout(renderGlobeOverlay, 0); // CPU fallback: recolour once on release
+  }
+  const slider = legend.querySelector('input[type="range"]');
+  slider?.addEventListener('input', e => {
     CONFIG.gain = sliderToGain(parseFloat(e.target.value));
-    updateHeatTables();
-    if (globeTiles?.length) renderGlobeOverlay();
+    scheduleHeatUpdate(false);
   });
+  slider?.addEventListener('change', () => scheduleHeatUpdate(true));
 
   // ---------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------
   function sync() {
     const visible = isHeatmapVisible();
+
+    // 2D Colour form: worldwide real loss, coloured (the analysis rings are drawn by app.js)
+    const colourOn = (document.getElementById('toggle-tree-loss')?.checked ?? true) &&
+      document.getElementById('tree-loss-mode')?.value === 'color';
+    if (colourOn && !map.hasLayer(colourLoss)) map.addLayer(colourLoss);
+    if (!colourOn && map.hasLayer(colourLoss)) map.removeLayer(colourLoss);
 
     [heatBase, heatLoss].forEach(layer => {
       if (visible && !map.hasLayer(layer)) map.addLayer(layer);
@@ -493,6 +716,8 @@
       setGlobeHeatBase(visible);
     }
     if (visible && globeScene) loadGlobeTiles();
+    // sensitivity changed while the globe overlay was hidden: recolour it now
+    if (visible && globeTiles?.length && lutGain !== CONFIG.gain) renderGlobeOverlay();
     if (globeOverlay) globeOverlay.visible = visible;
     legend.classList.toggle('hidden', !visible);
   }
@@ -517,5 +742,7 @@
     densityToHeat,
     rampRgb,
     lossToHeatRgba,
+    tileDensity,
+    densityToHeatRgba,
   };
 })();

@@ -1218,6 +1218,7 @@ html, body {
 #map.fw-heat .fw-hide-in-heatmap { display: none; }
 #map .fw-heat-base { filter: url(#fw-heat-base); }
 #map .fw-heat-loss { filter: url(#fw-heat-loss); }
+#map .fw-colour-loss { filter: url(#fw-colour-loss); }
 
 .fw-heatmap-legend {
   position: fixed;

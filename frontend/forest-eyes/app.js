@@ -916,59 +916,26 @@ function renderTreeLossColorForm(lat, lng, rows) {
     radius: outerRadius,
     stroke: false,
     fillColor: '#ffd166',
-    fillOpacity: 0.11,
-  }).bindTooltip('Outer tree loss influence').addTo(treeLossColorLayer);
+    fillOpacity: 0.06,
+  }).bindTooltip(`Analysed area (~${radiusKm} km)`).addTo(treeLossColorLayer);
 
   L.circle([lat, lng], {
     radius: midRadius,
     stroke: false,
     fillColor: '#ff9800',
-    fillOpacity: 0.18 + intensity * 0.06,
-  }).bindTooltip('Moderate tree loss zone').addTo(treeLossColorLayer);
+    fillOpacity: 0.08 + intensity * 0.05,
+  }).bindTooltip(`Analysis: ${totalHa.toFixed(1)} ha lost in total`).addTo(treeLossColorLayer);
 
   L.circle([lat, lng], {
     radius: centerRadius,
     stroke: false,
     fillColor: '#f44336',
-    fillOpacity: 0.35 + intensity * 0.16,
-  }).bindTooltip('Deforestation centre').addTo(treeLossColorLayer);
+    fillOpacity: 0.12 + intensity * 0.1,
+  }).bindTooltip('Analysed point (ring size reflects total loss, not exact locations)').addTo(treeLossColorLayer);
 
-  const sortedRows = [...rows].sort((a, b) => b.ha - a.ha);
-  sortedRows.forEach((row, index) => {
-    if (row.ha < 0.1) return;
-    const rowIntensity = row.ha / maxHa;
-    const point = lossHotspotPoint(lat, lng, index, sortedRows.length, radiusKm, rowIntensity);
-    const color = treeLossColor(rowIntensity, point.distanceRatio);
-    L.circle([point.lat, point.lng], {
-      radius: 360 + rowIntensity * 1750,
-      color,
-      fillColor: color,
-      fillOpacity: 0.28 + rowIntensity * 0.42,
-      weight: 0,
-      opacity: 0.82,
-    }).bindTooltip(`${row.year}: ${row.ha.toFixed(2)} ha lost`).addTo(treeLossColorLayer);
-  });
+  // (Per-year circles used to be drawn at invented positions around the centre; the real loss
+  // pattern is now shown by the colour-form tile layer from heatmap.js, so they are gone.)
   syncTreeLossLayer();
-}
-
-function lossHotspotPoint(lat, lng, index, count, radiusKm, intensity) {
-  if (index < 2) {
-    const closeOffset = index === 0 ? -0.0025 : 0.0025;
-    return { lat: lat + closeOffset, lng: lng + closeOffset, distanceRatio: 0.12 };
-  }
-
-  const angle = ((index - 2) / Math.max(count - 2, 1)) * Math.PI * 2 + Math.PI / 5;
-  const distanceRatio = 0.34 + (1 - intensity) * 0.34;
-  const distanceKm = radiusKm * distanceRatio;
-  const latOffset = (Math.sin(angle) * distanceKm) / 111;
-  const lngOffset = (Math.cos(angle) * distanceKm) / (111 * Math.max(Math.cos(lat * Math.PI / 180), 0.18));
-  return { lat: lat + latOffset, lng: lng + lngOffset, distanceRatio };
-}
-
-function treeLossColor(intensity, distanceRatio) {
-  if (intensity > 0.66 && distanceRatio < 0.28) return '#f44336';
-  if (intensity > 0.38 || distanceRatio < 0.55) return '#ff9800';
-  return '#ffd166';
 }
 
 function getTreeLossMode() {
