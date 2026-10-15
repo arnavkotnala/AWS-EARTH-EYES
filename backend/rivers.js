@@ -270,6 +270,7 @@ function traceAlong(sketch, { snapKm = 12, matchKm = 40, minMatch = 0.6, endKm =
     const last = keptRows[keptRows.length - 1];
     best = {
       path: kept,
+      reachIds: keptRows.map(r => d.id[r]),
       reaches: keptRows.length,
       lengthKm: Math.round(lengthKm),
       endDischargeCms: Math.round(d.dischargeCms[last]),
@@ -383,4 +384,10 @@ function network([w, s, e, n], zoom, classes = new Set([1, 2, 3, 4, 5])) {
   return { zoom, worldMinKm2: worldMin, indiaMinKm2: indiaMin, reaches: count, lines };
 }
 
-module.exports = { load, available, nearest, within, downstream, traceAlong, stretch, network, widthClass, MAJOR_KM2 };
+/** Full reach descriptions (with shapes) for a list of reach ids, in the given order. */
+function describeIds(ids) {
+  const d = load();
+  return ids.map(id => d.rowOf(id)).filter(r => r !== undefined).map(r => describe(d, r));
+}
+
+module.exports = { load, available, nearest, within, downstream, traceAlong, stretch, network, describeIds, widthClass, MAJOR_KM2 };

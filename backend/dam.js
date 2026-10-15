@@ -125,8 +125,12 @@ async function screen({ lat, lon, targetMw }) {
  * intake → powerhouse candidate with its head, flow, power and weir crest.
  */
 async function analyzeStretch(reach, upKm, downKm) {
+  return analyzeChain(rivers.stretch(reach.id, upKm, downKm));
+}
+
+/** Same analysis for an explicit list of consecutive reaches (upstream → downstream). */
+async function analyzeChain(chain) {
   // Nodes every ~1 km along the channel, upstream → downstream.
-  const chain = rivers.stretch(reach.id, upKm, downKm);
   const nodes = [];
   let along = 0;
   for (const r of chain) {
@@ -328,6 +332,32 @@ function foundationScore(s) {
   return Math.max(0, Math.min(1, 0.5 + 0.5 * stones - 0.4 * clay));
 }
 
+/**
+ * Every feasible scheme that can coexist: candidates are taken best-first and kept unless their
+ * river stretch overlaps one already kept (same section) or their weirs are < 3 km apart.
+ * `section` identifies the analysed river section a candidate came from.
+ */
+function feasibleSet(candidates, rankBy = c => c.mw) {
+  const kept = [];
+  for (const c of [...candidates].sort((a, b) => rankBy(b) - rankBy(a))) {
+    const clash = kept.some(o => (o.section === c.section
+      ? c.intakeAlongKm < o.powerhouseAlongKm && o.intakeAlongKm < c.powerhouseAlongKm
+      : kmFrom(o.intake, c.intake) < 3));
+    if (!clash) kept.push(c);
+  }
+  return kept;
+}
+
+/** Groups feasible sites into regions: sites whose weirs lie within 15 km of each other. */
+function regionsOf(sites) {
+  const regions = [];
+  for (const s of sites) {
+    const r = regions.find(g => g.some(o => kmFrom(o.intake, s.intake) <= 15));
+    if (r) r.push(s); else regions.push([s]);
+  }
+  return regions;
+}
+
 async function plan({ city, lat, lon, targetMw, radiusKm }) {
   lat = Number(lat); lon = Number(lon);
   targetMw = Math.min(5000, Math.max(10, Number(targetMw) || 300));
@@ -379,11 +409,20 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
     const potential = stretches.reduce((t, st) => t + Math.max(0, ...st.candidates.map(c => c.mw)), 0);
     if (k + 3 >= 6 && potential >= 1.5 * targetMw) break;
   }
-  let candidates = stretches.flatMap((st, k) => st.candidates.map(c => ({ ...c, stretch: k })));
+  let candidates = stretches.flatMap((st, k) => st.candidates.map(c => ({ ...c, stretch: k, section: k })));
+  // How much is feasible at all (not just what the city needs): every coexisting site found
+  const allFeasible = feasibleSet(candidates);
+  const feasible = {
+    sites: allFeasible.length,
+    regions: regionsOf(allFeasible).length,
+    totalMw: +allFeasible.reduce((t, c) => t + c.mw, 0).toFixed(1),
+    points: allFeasible.map(c => ({ intake: c.intake, mw: c.mw })),
+  };
   if (!candidates.length) {
     return {
       ok: false, city: { name: cityName, lat, lon }, targetMw, radiusKm,
       reason: `Within ${radiusKm} km of ${cityName} no river stretch has enough drop and a narrow enough valley for run-of-river hydropower. Try a larger radius.`,
+      feasible: { sites: 0, regions: 0, totalMw: 0, points: [] },
       reachesScanned: rows.length, assumptions: assumptions(), notEvaluated: PLAN_NOT_EVALUATED,
     };
   }
@@ -442,8 +481,10 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
     meetsTarget: total >= targetMw,
     annualGWh: Math.round(Math.min(total, targetMw) * 8760 * CAPACITY_FACTOR / 1000),
     sites: chosen,
+    feasible,
     weights: PLAN_WEIGHTS,
     reachesScanned: rows.length,
+    stretchesPromising: seeds.length,
     stretchesAnalysed: stretches.length,
     candidatesScored: candidates.length,
     tookMs: Date.now() - t0,
@@ -462,6 +503,110 @@ async function plan({ city, lat, lon, targetMw, radiusKm }) {
       'Earthquakes: USGS ComCat',
     ],
   };
+}
+
+// ---------------------------------------------------------------------------
+// River Dam Atlas: every feasible site along one whole river
+// ---------------------------------------------------------------------------
+const ATLAS_SECTION_KM = 30;
+const ATLAS_MAX_SECTIONS = 16;
+
+/**
+ * input: { sketch: [[lat, lon], ...] } (a named river's rough line) or { lat, lon } (any river,
+ * by clicking it). The river is followed source → mouth, cut into ~30 km sections, every section
+ * is pre-screened on a coarse elevation model, and the most promising ones are analysed in detail.
+ */
+async function atlas({ name, sketch, lat, lon }) {
+  if (!rivers.available()) throw httpError(503, 'River network data is not installed on the server.');
+  const t0 = Date.now();
+  let ids, riverName = String(name || '').slice(0, 120);
+  if (Array.isArray(sketch) && sketch.length >= 2 && sketch.every(p => Array.isArray(p) && p.every(Number.isFinite))) {
+    const tr = rivers.traceAlong(sketch);
+    if (!tr) throw httpError(404, 'Could not trace this river in the river network.');
+    ids = tr.reachIds;
+  } else {
+    lat = Number(lat); lon = Number(lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw httpError(400, 'Pick a river or click on one.');
+    const reach = rivers.nearest(lat, lon, 15);
+    if (!reach) throw httpError(404, 'No major river (≥ 1000 km² catchment) within 15 km of that point.');
+    ids = rivers.stretch(reach.id, 5000, 5000).map(r => r.id); // whole main stem, source → sea
+    riverName = riverName || `River at ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  }
+  const reaches = rivers.describeIds(ids);
+  const lengthKm = reaches.reduce((t, r) => t + r.reachLengthKm, 0);
+
+  // Cut into ~30 km sections and pre-screen each on a coarse (~300 m) elevation model.
+  const sections = [];
+  let cur = [], km = 0;
+  for (const r of reaches) {
+    cur.push(r); km += r.reachLengthKm;
+    if (km >= ATLAS_SECTION_KM) { sections.push(cur); cur = []; km = 0; }
+  }
+  if (cur.length) sections.push(cur);
+  const ends = await elevations(reaches.flatMap(r => [r.start, r.end]), 9);
+  const zOf = new Map(reaches.map((r, k) => [r.id, [ends[2 * k], ends[2 * k + 1]]]));
+  const scored = sections.map((sec, k) => {
+    let mw = 0;
+    for (const r of sec) {
+      const [z0, z1] = zOf.get(r.id);
+      if (r.meanDischargeCms > 1500 && Math.min(z0, z1) < 200) continue; // lowland giant: no diversion schemes
+      mw += (ETA * RHO * G * r.meanDischargeCms * Math.max(0, z0 - z1)) / 1e6;
+    }
+    return { k, sec, mw };
+  });
+  const promising = scored.filter(x => x.mw >= 10).sort((a, b) => b.mw - a.mw);
+  const chosen = promising.slice(0, ATLAS_MAX_SECTIONS);
+
+  // Detailed analysis, a few sections at a time.
+  const candidates = [];
+  for (let i = 0; i < chosen.length; i += 4) {
+    const batch = await Promise.all(chosen.slice(i, i + 4).map(x =>
+      analyzeChain(x.sec).then(r => r.candidates.map(c => ({ ...c, section: x.k })), err => {
+        console.warn('[atlas] section failed:', err.message);
+        return [];
+      })));
+    batch.forEach(list => candidates.push(...list));
+  }
+  // Rank by power and gorge narrowness (no city here), then keep every site that can coexist.
+  const maxLog = Math.max(1, ...candidates.map(c => Math.log10(c.mw + 1)));
+  for (const c of candidates) {
+    c.score = Math.round(100 * (0.65 * Math.log10(c.mw + 1) / maxLog + 0.35 * (1 - Math.min(1, c.weirCrestM / MAX_CREST_M))));
+  }
+  const sites = feasibleSet(candidates, c => c.score)
+    .sort((a, b) => (a.section - b.section) || (a.intakeAlongKm - b.intakeAlongKm));
+  await Promise.all(sites.map(async c => {
+    c.soil = soil.lookup(c.intake[0], c.intake[1]);
+    c.quakesM5Within50km = await quakesNear(c.intake[0], c.intake[1]).catch(() => null);
+  }));
+  sites.forEach((c, k) => { c.rank = k + 1; c.kmFromSource = Math.round(sectionStartKm(sections, c.section) + c.intakeAlongKm); });
+
+  return {
+    ok: true,
+    river: { name: riverName || 'River', lengthKm: Math.round(lengthKm), reaches: reaches.length },
+    path: reaches.flatMap((r, k) => (k ? r.shape.slice(1) : r.shape)),
+    sections: { total: sections.length, promising: promising.length, analysed: chosen.length },
+    feasible: { sites: sites.length, regions: regionsOf(sites).length, totalMw: +sites.reduce((t, c) => t + c.mw, 0).toFixed(1) },
+    sites,
+    tookMs: Date.now() - t0,
+    assumptions: [
+      ...assumptions(),
+      `The river is cut into ~${ATLAS_SECTION_KM} km sections; all are pre-screened on a ~300 m elevation model and the ${ATLAS_MAX_SECTIONS} most promising are analysed in detail.`,
+      'Feasible sites = every scheme that passes all checks and can coexist (no overlapping river stretch, weirs at least 3 km apart). Regions = groups of sites within 15 km.',
+    ],
+    notEvaluated: PLAN_NOT_EVALUATED,
+    sources: [
+      'River network & mean discharge: HydroRIVERS v1.0 (HydroSHEDS, Lehner & Grill 2013), modelled',
+      `Elevation: ${elevationSource}`,
+      'Soil: ISRIC SoilGrids 2.0 (India grid)',
+      'Earthquakes: USGS ComCat',
+    ],
+  };
+}
+
+function sectionStartKm(sections, k) {
+  let km = 0;
+  for (let i = 0; i < k; i++) km += sections[i].reduce((t, r) => t + r.reachLengthKm, 0);
+  return km;
 }
 
 const PLAN_NOT_EVALUATED = [
@@ -508,4 +653,4 @@ const NOT_EVALUATED = [
   'Existing dams and transboundary agreements',
 ];
 
-module.exports = { screen, plan };
+module.exports = { screen, plan, atlas };
