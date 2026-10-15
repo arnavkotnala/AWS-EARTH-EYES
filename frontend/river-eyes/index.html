@@ -920,9 +920,9 @@
             <span>🧪</span>
             <span>Site Conditions</span>
           </div>
-          <div class="nav-item" id="nav-flood" onclick="switchTab('geotech')" title="14-day GloFAS river forecast vs the 2-year flood, in Site Conditions">
-            <span>🚨</span>
-            <span>Flood Forecast (GloFAS)</span>
+          <div class="nav-item" id="nav-water" onclick="switchTab('water')" title="Turbidity and chlorophyll of a river or lake from recent Sentinel-2 satellite images">
+            <span>💧</span>
+            <span>Water Quality (Sentinel-2)</span>
           </div>
         </div>
       </div>
@@ -965,6 +965,23 @@
           <div class="panel-body">
                         <!-- Results container -->
             <div id="dam-plan-results" style="margin-top: 16px; display: none;"></div>
+          </div>
+        </div>
+
+        <!-- Water Quality Panel -->
+        <div class="view-panel" id="water-panel" style="display: none;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>💧</span>
+              <span>Water Quality (Sentinel-2)</span>
+            </div>
+            <button class="btn" style="padding: 2px 6px;" onclick="closePanel('water-panel')">✕</button>
+          </div>
+          <div class="panel-body">
+            <p style="color: var(--text-muted); font-size: 12px; margin: 0 0 8px;">Turbidity and algae (chlorophyll) of a river or lake, measured from the newest cloud-free Sentinel-2 satellite images. Gemma 4 explains what it sees.</p>
+            <div id="water-selected" style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Click a river or lake on the map first.</div>
+            <button class="btn btn-primary" id="water-run" style="width: 100%; justify-content: center; padding: 10px;" onclick="runWaterQuality()">Analyse water quality here</button>
+            <div id="water-results" style="margin-top: 10px;"></div>
           </div>
         </div>
 
@@ -1347,9 +1364,6 @@
       // Click on map to set Target Location for Dam Planner
       map.on('click', function(e) {
         if (pickMode) { onPickClick(); return; }
-        document.getElementById('target-lat').value = e.latlng.lat.toFixed(4);
-        document.getElementById('target-lon').value = e.latlng.lng.toFixed(4);
-        document.getElementById('target-location-name').value = `Coord (${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)})`;
         loadSiteConditions(e.latlng.lat, e.latlng.lng, `Clicked site (${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)})`);
 
       });
@@ -1495,8 +1509,12 @@
       // Close all panels
       closePanel('dam-planner-panel');
       closePanel('geotech-panel');
+      closePanel('water-panel');
 
-      if (tabId === 'dam-planner') {
+      if (tabId === 'water') {
+        showWaterSelection();
+        document.getElementById('water-panel').style.display = 'flex';
+      } else if (tabId === 'dam-planner') {
         document.getElementById('dam-planner-panel').style.display = 'flex';
       } else if (tabId === 'geotech') {
         // content is filled by loadSiteConditions() on river switch / map click
@@ -1531,6 +1549,8 @@
     // HydroRIVERS + GloFAS flow, SoilGrids soil, USGS earthquakes.
     let siteRequest = 0;
     async function loadSiteConditions(lat, lon, label) {
+      selectedSite = { lat, lon, label };
+      showWaterSelection();
       const id = ++siteRequest;
       const body = document.getElementById('geotech-panel-body');
       ['hud-health', 'hud-bearing', 'hud-seismic'].forEach(k => { document.getElementById(k).textContent = '…'; });
@@ -1597,6 +1617,99 @@
           <ul style="margin:4px 0 0;padding-left:16px;">${d.notAvailable.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
         </div>
         <div style="margin-top:8px;font-size:10px;color:var(--text-dim);">${d.sources.map(escapeHtml).join(' · ')}</div>`;
+    }
+
+    // =========================================================================
+    // WATER QUALITY (Sentinel-2) — server: /api/v1/water-quality (water.js)
+    // Turbidity (Dogliotti 2015) and chlorophyll index (NDCI) of the water at the selected point,
+    // from the newest cloud-free Sentinel-2 images; Gemma 4 reads the satellite image.
+    // =========================================================================
+    let selectedSite = null; // { lat, lon, label } — set by map clicks and river selection
+
+    function showWaterSelection() {
+      const el = document.getElementById('water-selected');
+      if (el) el.innerHTML = selectedSite
+        ? `📍 <b>${escapeHtml(selectedSite.label)}</b> (${selectedSite.lat.toFixed(3)}, ${selectedSite.lon.toFixed(3)})<br/><span style="color:var(--text-dim)">Click any river or lake on the map to choose another place.</span>`
+        : 'Click a river or lake on the map first.';
+    }
+
+    async function runWaterQuality() {
+      if (!selectedSite) { showWaterSelection(); return; }
+      const out = document.getElementById('water-results');
+      const btn = document.getElementById('water-run');
+      btn.disabled = true;
+      out.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:8px 0;">🛰️ Finding the newest cloud-free Sentinel-2 images and measuring the water… (~20–40 s)</div>`;
+      let r, error;
+      try {
+        const res = await fetch('/api/v1/water-quality', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat: selectedSite.lat, lon: selectedSite.lon, name: selectedSite.label }),
+        });
+        r = await res.json();
+        if (!res.ok) error = r.error || `HTTP ${res.status}`;
+      } catch {
+        error = 'Could not reach the server. Try again in a moment.';
+      }
+      btn.disabled = false;
+      if (error) {
+        out.innerHTML = `<div style="border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.08);border-radius:8px;padding:10px;font-size:12px;color:#fca5a5;">${escapeHtml(error)}</div>`;
+        return;
+      }
+      renderWaterQuality(r);
+    }
+
+    function renderWaterQuality(r) {
+      const L0 = r.latest;
+      const fnu = v => (v.turbiditySaturated ? '≥ 1,000' : v.turbidityFnu.toLocaleString());
+      const turbColour = v => (v.turbidityFnu < 10 ? '#34d399' : v.turbidityFnu < 50 ? '#a3e635' : v.turbidityFnu < 150 ? '#fbbf24' : v.turbidityFnu < 500 ? '#fb923c' : '#f87171');
+      const chlColour = v => (v.ndci < 0 ? '#34d399' : v.ndci < 0.1 ? '#a3e635' : v.ndci < 0.2 ? '#fbbf24' : '#f87171');
+      const conf = { good: ['#34d399', 'good: plenty of open water measured'], fair: ['#fbbf24', 'fair: limited open water'], low: ['#f87171', 'low: narrow river, pixels mix water and riverbank'] }[L0.confidence];
+      const list = items => `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--text-muted);">${items.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
+      const ai = r.reading;
+      const aiTag = !ai ? '<span style="color:#fbbf24;">⚠ AI reading unavailable right now; the measurements below are unaffected.</span>'
+        : ai.source === 'gemma' ? `<span style="color:#38bdf8;">✦ Gemma 4 reading (${escapeHtml(ai.model)}) of the satellite image</span>`
+        : '<span style="color:#fbbf24;">⚠ Gemma 4 was unavailable · reading by a backup model</span>';
+
+      // show the analysed box on the map
+      if (window.waterBoxLayer) map.removeLayer(window.waterBoxLayer);
+      const [w, s, e, n] = r.box;
+      window.waterBoxLayer = L.rectangle([[s, w], [n, e]], { color: '#38bdf8', weight: 2, dashArray: '5 5', fill: false })
+        .bindTooltip('Area measured for water quality').addTo(map);
+
+      document.getElementById('water-results').innerHTML = `
+        <img src="${escapeHtml(L0.imageUrl)}" alt="Sentinel-2 true-colour image of the measured area" loading="lazy"
+             style="width:100%;border-radius:8px;border:1px solid var(--border-subtle);margin-top:4px;aspect-ratio:1;object-fit:cover;background:#0b1220;" />
+        <div style="font-size:10px;color:var(--text-dim);margin:4px 0 8px;">Sentinel-2 · ${L0.date} · ${L0.waterAreaHa} ha of open water measured · confidence <b style="color:${conf[0]}">${conf[1]}</b></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:8px;padding:8px 10px;">
+            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">Turbidity</div>
+            <div style="font-size:18px;font-weight:800;color:${turbColour(L0)};font-family:var(--font-mono);">${fnu(L0)} <span style="font-size:11px;">FNU</span></div>
+            <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(L0.turbidityClass)}</div>
+          </div>
+          <div style="background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:8px;padding:8px 10px;">
+            <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">Chlorophyll (NDCI)</div>
+            <div style="font-size:18px;font-weight:800;color:${chlColour(L0)};font-family:var(--font-mono);">${L0.ndci}</div>
+            <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(L0.chlorophyllClass)}</div>
+          </div>
+        </div>
+        <strong style="display:block;color:#fff;font-size:11px;margin-top:10px;">Recent clear images</strong>
+        <table style="width:100%;font-size:11px;margin-top:4px;border-collapse:collapse;">
+          ${r.trend.map(t => `<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 0;color:var(--text-muted);">${t.date}</td>
+            <td style="text-align:right;font-family:var(--font-mono);color:${turbColour(t)};">${fnu(t)} FNU</td>
+            <td style="text-align:right;font-family:var(--font-mono);color:${chlColour(t)};">NDCI ${t.ndci}</td></tr>`).join('')}
+        </table>
+        <div style="margin-top:10px;padding:8px 10px;border:1px solid var(--border-subtle);border-radius:8px;font-size:11px;">
+          ${aiTag}
+          ${ai ? `<div style="color:#fff;margin-top:4px;">${escapeHtml(ai.summary)}</div>
+            <div style="margin-top:4px;color:var(--text-dim);">Seen in the image:</div>${list(ai.image_observations)}
+            <div style="margin-top:4px;color:var(--text-dim);">Possible causes:</div>${list(ai.likely_causes)}
+            <div style="margin-top:4px;color:var(--text-dim);">Next steps:</div>${list(ai.advice)}` : ''}
+        </div>
+        <div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:8px 10px;font-size:11px;color:#fde68a;margin-top:10px;">
+          <b>Satellites see colour, not chemistry.</b> Not measured here: ${r.notMeasured.map(escapeHtml).join(', ')}. These need water samples.
+        </div>
+        <details style="margin-top:6px;font-size:11px;color:var(--text-muted);"><summary style="cursor:pointer;">Method</summary>${list(r.method)}</details>
+        <div style="margin-top:6px;font-size:10px;color:var(--text-dim);">${r.sources.map(escapeHtml).join(' · ')} · ${(r.tookMs / 1000).toFixed(0)} s</div>`;
     }
 
     // =========================================================================

@@ -46,6 +46,7 @@ forestCore?.setGenerator(gemma.generate);
 const hazard = require('./hazard.js');
 const dam = require('./dam.js');
 const site = require('./site.js');
+const water = require('./water.js');
 const rivers = require('./rivers.js');
 const traceCache = new Map();
 const networkCache = new Map();
@@ -184,6 +185,20 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(500, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  // Water quality from Sentinel-2 (/api/v1/water-quality) — { lat, lon, name }
+  if (url.pathname === '/api/v1/water-quality' && req.method === 'POST') {
+    try {
+      const result = await water.assess(JSON.parse(await readBody(req, 4 * 1024) || '{}'));
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify(result));
+    } catch (err) {
+      const status = err.status || (err instanceof SyntaxError ? 400 : 502);
+      if (status >= 500) console.warn('[water]', err.message);
+      res.writeHead(status, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: err.status || err instanceof SyntaxError ? err.message : 'Satellite water-quality service unavailable. Try again.' }));
     }
   }
 
