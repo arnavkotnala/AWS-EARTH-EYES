@@ -17,7 +17,7 @@ const URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrariu
 const SOURCE = 'AWS Terrain Tiles (Mapzen/Tilezen: SRTM, GMTED, ETOPO1 and national DEMs), ~38 m';
 
 const tiles = new Map(); // key → Promise<Float32Array>
-const MAX_TILES = 400;   // ~100 MB worst case
+const MAX_TILES = 200;   // Int16 tiles: ~26 MB worst case (the free host has 512 MB in total)
 
 function decodePng(buf) {
   if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
@@ -60,9 +60,9 @@ function decodePng(buf) {
       px[dst + i] = v & 255;
     }
   }
-  const out = new Float32Array(width * height);
+  const out = new Int16Array(width * height); // whole metres: enough, and half the memory
   for (let i = 0; i < width * height; i++) {
-    out[i] = px[i * bpp] * 256 + px[i * bpp + 1] + px[i * bpp + 2] / 256 - 32768;
+    out[i] = Math.round(px[i * bpp] * 256 + px[i * bpp + 1] + px[i * bpp + 2] / 256 - 32768);
   }
   return out;
 }

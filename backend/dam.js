@@ -115,6 +115,9 @@ async function screen({ lat, lon, targetMw }) {
 
   const reach = rivers.nearest(lat, lon, 20);
   if (!reach) throw httpError(404, 'No major river (≥ 1000 km² catchment) within 20 km. Click closer to a river.');
+  if (reach.meanDischargeCms < 1) {
+    throw httpError(404, `The nearest river channel is dry or seasonal (mean flow ${reach.meanDischargeCms} m³/s): no hydropower possible.`);
+  }
   const { nodes, candidates } = await analyzeStretch(reach, 60, 60);
   return pickSites({ reach, nodes, candidates, targetMw });
 }

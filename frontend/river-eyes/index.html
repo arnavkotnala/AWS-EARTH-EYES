@@ -911,17 +911,9 @@
             <span>🧪</span>
             <span>Site Conditions</span>
           </div>
-          <div class="nav-item" id="nav-pollution" onclick="switchTab('pollution')">
-            <span>💧</span>
-            <span>Pollution WQI (CPCB)</span>
-          </div>
-          <div class="nav-item" id="nav-flood" onclick="switchTab('flood')">
+          <div class="nav-item" id="nav-flood" onclick="switchTab('geotech')" title="14-day GloFAS river forecast vs the 2-year flood, in Site Conditions">
             <span>🚨</span>
-            <span>Flood Gauge Warnings</span>
-          </div>
-          <div class="nav-item" id="nav-spill" onclick="switchTab('spill')">
-            <span>🧪</span>
-            <span>Spill Advection Model</span>
+            <span>Flood Forecast (GloFAS)</span>
           </div>
         </div>
       </div>
@@ -2084,7 +2076,7 @@
           }
         } else {
           const err = await res.json().catch(() => ({}));
-          appendChatMessage(formatMarkdown(`*AI unavailable: ${err.error || 'server error'}. Showing a built-in reference answer (not AI-generated).*`), 'aqua');
+          appendChatMessage(formatMarkdown(`*AI unavailable: ${String(err.error || 'server error').replace(/[.\s]+$/, '')}. Showing a built-in reference answer (not AI-generated).*`), 'aqua');
           appendFallbackAquaAnswer(text);
         }
       } catch (err) {
