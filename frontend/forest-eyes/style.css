@@ -777,6 +777,14 @@ html, body {
   white-space: nowrap;
 }
 
+/* Many years (2001–2024): thin bars, sparse year labels, values on hover (app.js renderBarChart) */
+.bar-item { min-width: 0; }
+.bar-chart.dense { gap: 2px; }
+.bar-chart.dense .bar-label-val { display: none; }
+.bar-chart.dense .bar-fill { border-radius: 2px 2px 0 0; }
+.bar-chart.dense .bar-label-year { min-height: 11px; white-space: nowrap; overflow: visible; }
+.bar-chart.dense .bar-item:hover .bar-fill { filter: brightness(1.35); }
+
 /* =============================================
    PLANTING CARD
    ============================================= */

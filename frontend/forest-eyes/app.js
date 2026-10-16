@@ -654,9 +654,11 @@ async function triggerGNWAnalyticsJob(geojson) {
       type: 'feature_collection',
       feature_collection: geojson,
     },
-    start_year: '2021',
+    // ≥30 % canopy cover in 2000, like the GFW Data API query above, so both give 2001–2024.
+    // (forest_filter 'natural_forest' is a 2020 snapshot: GNW only allows it for 2021 onwards.)
+    start_year: '2001',
     end_year: '2024',
-    forest_filter: 'natural_forest',
+    canopy_cover: 30,
     intersections: [],
   };
 
@@ -812,7 +814,11 @@ function renderDeforestationResults(lat, lng, locationName, data, source) {
 function renderBarChart(rows, color) {
   $barChart.innerHTML = '';
   const maxHa = Math.max(...rows.map(r => r.ha), 0.01);
-  rows.forEach(row => {
+  // 2001–2024 is 24 bars: too many for a label on each, so thin bars, a year label every 5 years
+  // (and the first / last), values on hover
+  const dense = rows.length > 12;
+  $barChart.classList.toggle('dense', dense);
+  rows.forEach((row, i) => {
     const pct = Math.max((row.ha / maxHa) * 100, 2);
     const item = document.createElement('div');
     item.className = 'bar-item';
@@ -823,9 +829,11 @@ function renderBarChart(rows, color) {
     fill.className = `bar-fill ${color}`;
     fill.style.height = '0%';
     fill.title = `${row.year}: ${row.ha.toFixed(2)} ha`;
+    item.title = fill.title; // the whole column, so thin bars are easy to hover
     const yearLabel = document.createElement('div');
     yearLabel.className = 'bar-label-year';
-    yearLabel.textContent = row.year;
+    const labelled = !dense || i === 0 || i === rows.length - 1 || row.year % 5 === 0;
+    yearLabel.textContent = labelled ? row.year : '';
     item.appendChild(valLabel);
     item.appendChild(fill);
     item.appendChild(yearLabel);
