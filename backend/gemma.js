@@ -73,7 +73,11 @@ function describe() {
  * @param {number} [req.timeoutMs] Per-attempt timeout (raised to the configured minimum)
  * @returns {Promise<{text:string, model:string, provider:string}>}
  */
-async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl = fetch) {
+/**
+ * jsonMode (with a schema): 'schema' = constrained decoding (default), 'prompt' = the schema is
+ * only described in the prompt. GEMMA_JSON_MODE overrides it for every caller.
+ */
+async function generate({ system, contents, schema, timeoutMs, jsonMode } = {}, fetchImpl = fetch) {
   const cfg = settings();
   const plan = buildPlan(cfg);
   if (!plan.length) throw httpError(503, 'AI is not set up: add GEMINI_API_KEY (or a Bedrock key) to the server settings.');
@@ -86,9 +90,18 @@ async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl 
   // Keep 30 s of the budget for the backup, if there is one.
   const gemmaDeadline = deadline - (backups.length ? 30000 : 0);
   const perAttemptMs = Math.max(timeoutMs || 0, cfg.timeoutMs);
-  const call = (step, ms, signal) => step.provider === 'bedrock'
+  const call = (step, ms, signal) => (step.provider === 'bedrock'
     ? callBedrock(step.model, turns, cfg, ms, fetchImpl, signal)
-    : callGemini(step.model, turns, schema, cfg.geminiKey, ms, fetchImpl, signal);
+    : callGemini(step.model, turns, schema, cfg.geminiKey, ms, fetchImpl, signal, process.env.GEMMA_JSON_MODE || jsonMode)
+  ).then(text => {
+    // Gemma sometimes gets stuck repeating itself ("type-type-type-…"): count it as a failed attempt
+    if (looksDegenerate(text)) throw Object.assign(new Error('Answer was stuck repeating itself'), { retry: true });
+    // In 'prompt' JSON mode nothing forces valid JSON, so check it (constrained answers too: cheap)
+    if (schema) {
+      try { parseJson(text); } catch { throw Object.assign(new Error('Answer was not valid JSON'), { retry: true }); }
+    }
+    return text;
+  });
   const answer = (step, text) => {
     // The backup model is reported generically: the UI only names Gemma models.
     const isGemma = step.model.startsWith('gemma');
@@ -156,6 +169,19 @@ async function generate({ system, contents, schema, timeoutMs } = {}, fetchImpl 
   throw httpError(502, 'Gemma 4 could not answer right now. Please try again.');
 }
 
+/** True for answers stuck in a loop: words or phrases repeated back to back, or very little variety. */
+function looksDegenerate(text) {
+  const s = String(text || '');
+  if (/(\b[a-z]{2,20}[\s,.;:-]+)\1{7,}/i.test(s)) return true;
+  // a phrase three times in a row: "near-neutral, near-neutral, near-neutral"
+  if (/([a-z][^\n]{10,80}?[\s,.;:-]+)\1{2,}/i.test(s)) return true;
+  // other signs of the same failure: "enough-to-study-the-category-of-the", long runs of blanks
+  // after a word (JSON indentation follows a newline, so it does not count)
+  if (/\b[a-z]+(?:-[a-z]+){5,}/i.test(s) || /\S {12,}/.test(s)) return true;
+  const words = s.toLowerCase().match(/[a-z]{2,}/g) || [];
+  return words.length > 120 && new Set(words).size / words.length < 0.2;
+}
+
 /** Gemma has no system role: put the instructions (and the JSON contract) in the first user turn. */
 function withSystem(contents, system, schema) {
   const header = [
@@ -172,15 +198,27 @@ function timeoutSignal(ms, signal) {
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
 }
 
-async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl, signal) {
+async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl, signal, jsonMode) {
+  // 'prompt' mode exists for Treeko: with the schema enforced (constrained decoding) Gemma 4 26B
+  // looped in 7 of 8 test answers to "What is the soil profile?" ("slightly acidic to neutral,
+  // slightly acidic to neutral, …"); asked for JSON in the prompt only, with Google's recommended
+  // Gemma sampling, in 0 of 4. The Hazard Lens answered faster with the schema, so it keeps it.
+  // The schema text is always in the prompt too (withSystem).
   const body = { contents };
-  // GEMMA_JSON_MODE=prompt: ask for JSON in the prompt only (no constrained decoding).
-  if (schema && process.env.GEMMA_JSON_MODE !== 'prompt') {
-    body.generationConfig = { responseMimeType: 'application/json', responseJsonSchema: schema };
+  const isGemma = model.startsWith('gemma');
+  // the Gemini backup keeps the schema unless GEMMA_JSON_MODE=prompt is set for everything
+  const promptOnly = jsonMode === 'prompt' && (isGemma || process.env.GEMMA_JSON_MODE === 'prompt');
+  if (promptOnly && isGemma) {
+    // Minimal thinking: by default Gemma 4 wrote 1000-1500 hidden "thought" tokens first
+    // (27-38 s per answer, and they count against maxOutputTokens); minimal answered in 6-7 s.
+    body.generationConfig = { temperature: 1.0, topP: 0.95, topK: 64, maxOutputTokens: 2048, thinkingConfig: { thinkingLevel: 'minimal' } };
+  }
+  if (schema && !promptOnly) {
+    body.generationConfig = { ...body.generationConfig, responseMimeType: 'application/json', responseJsonSchema: schema };
   }
   // Gemini backup: minimal "thinking" answers in ~2-3 s instead of 5-15 s
   if (model.startsWith('gemini')) {
-    body.generationConfig = { ...(body.generationConfig || {}), thinkingConfig: { thinkingLevel: 'minimal' } };
+    body.generationConfig = { ...body.generationConfig, thinkingConfig: { thinkingLevel: 'minimal' } };
   }
   const res = await fetchImpl(GEMINI_API + encodeURIComponent(model) + ':generateContent', {
     method: 'POST',
@@ -225,10 +263,16 @@ async function callBedrock(modelId, contents, cfg, timeoutMs, fetchImpl, signal)
   return text;
 }
 
-/** Parses a JSON answer, tolerating ```json fences the model sometimes adds. */
+/** Parses a JSON answer, tolerating ```json fences or a sentence around the object. */
 function parseJson(text) {
   const clean = String(text).trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  return JSON.parse(clean);
+  try {
+    return JSON.parse(clean);
+  } catch (err) {
+    const a = clean.indexOf('{'), b = clean.lastIndexOf('}');
+    if (a < 0 || b <= a) throw err;
+    return JSON.parse(clean.slice(a, b + 1));
+  }
 }
 
-module.exports = { generate, parseJson, describe, settings };
+module.exports = { generate, parseJson, describe, settings, looksDegenerate };

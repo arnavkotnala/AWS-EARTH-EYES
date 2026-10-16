@@ -75,7 +75,7 @@ const satelliteBase = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/s
 });
 
 // GFW Data Layers (from tiles.globalforestwatch.org — extracted from repo configs)
-const treeCoverLayer = L.tileLayer('https://tiles.globalforestwatch.org/umd_tree_cover_density_2000/v1_8/tcd_30/{z}/{x}/{y}.png', {
+const treeCoverLayer = L.tileLayer('https://tiles.globalforestwatch.org/umd_tree_cover_density_2000/v1.8/tcd_30/{z}/{x}/{y}.png', {
   maxZoom: 12,
   opacity: 0.7,
   attribution: 'Tree Cover 2000 &copy; UMD/Hansen/Google/USGS/NASA',
@@ -885,8 +885,10 @@ function syncTreeLossLayer() {
   map.removeLayer(treeLossColorLayer);
   window.ForestHeatmap?.refresh(); // [heatmap] shows/hides itself from mode + toggle
   window.ForestGlobeLayers?.refresh(); // [globe-layers] Dot/Colour form on the 3D Earth
+  window.ForestReplay?.refresh(); // [loss-replay] shows/hides itself from mode + toggle
   if (!enabled) return;
   if (getTreeLossMode() === 'heatmap') return; // [heatmap] no tile/colour layer in this mode
+  if (getTreeLossMode() === 'replay') return; // [loss-replay] draws its own year-by-year layer
 
   if (getTreeLossMode() === 'color') {
     if (!treeLossColorLayer.getLayers().length && latestLossCenter && latestLossRows.length) {
@@ -1035,6 +1037,7 @@ function clearMapLayers() {
   treeLossColorLayer.clearLayers();
   window.ForestHeatmap?.refresh(); // [heatmap] keep heatmap in sync when layers are cleared
   window.ForestGlobeLayers?.refresh(); // [globe-layers] keep 3D Earth layers in sync when cleared
+  window.ForestReplay?.refresh(); // [loss-replay] analysed-area hectares are gone too
   // NOTE: appState.apiCache and appState.simCache intentionally NOT cleared.
 }
 

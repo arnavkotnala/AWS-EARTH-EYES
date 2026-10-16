@@ -278,15 +278,18 @@ const server = http.createServer(async (req, res) => {
 
   // GFW tree-loss tiles from our own origin (/tiles/gfw-loss/z/x/y.png): the 3D globe has to read
   // their pixels, which the GFW tile server does not always allow cross-site (CORS). Cached in memory.
-  const tileMatch = /^\/tiles\/gfw-loss\/(\d{1,2})\/(\d{1,5})\/(\d{1,5})\.png$/.exec(url.pathname);
+  // /tiles/gfw-loss/v1.12/z/x/y.png serves the 2001–2024 release (used by the year replay); its tiles
+  // are 512 px and also carry pixels with year 0, so the other modes stay on v1.11 (2001–2023).
+  const tileMatch = /^\/tiles\/gfw-loss\/(?:(v1\.12)\/)?(\d{1,2})\/(\d{1,5})\/(\d{1,5})\.png$/.exec(url.pathname);
   if (tileMatch && req.method === 'GET') {
-    const [z, x, y] = tileMatch.slice(1).map(Number);
+    const version = tileMatch[1] || 'v1.11';
+    const [z, x, y] = tileMatch.slice(2).map(Number);
     if (z > 12 || x >= 2 ** z || y >= 2 ** z) { res.writeHead(404); return res.end(); }
-    const key = `${z}/${x}/${y}`;
+    const key = `${version}/${z}/${x}/${y}`;
     let tile = tileCache.get(key);
     if (!tile) {
       try {
-        const up = await fetch(`https://tiles.globalforestwatch.org/umd_tree_cover_loss/v1.11/tcd_30/${key}.png`, { signal: AbortSignal.timeout(15000) });
+        const up = await fetch(`https://tiles.globalforestwatch.org/umd_tree_cover_loss/${version}/tcd_30/${z}/${x}/${y}.png`, { signal: AbortSignal.timeout(15000) });
         tile = up.ok ? { status: 200, body: Buffer.from(await up.arrayBuffer()) } : { status: up.status, body: null };
       } catch {
         tile = { status: 502, body: null };

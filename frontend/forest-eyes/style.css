@@ -1277,6 +1277,101 @@ html, body {
 }
 
 /* =============================================
+   TREE LOSS YEAR REPLAY (loss-replay.js)
+   ============================================= */
+.fw-replay-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(360px, calc(100vw - 32px));
+  padding: 12px 14px;
+  background: var(--glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+#globe-controls:not(.hidden) ~ .fw-replay-panel { bottom: 136px; }
+
+@media (max-width: 900px) {
+  .fw-replay-panel { left: 16px; transform: none; }
+}
+
+.fw-replay-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fw-replay-play {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  background: rgba(255, 45, 35, 0.18);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.fw-replay-play:hover { background: rgba(255, 45, 35, 0.32); }
+
+.fw-replay-year {
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.fw-replay-stat {
+  flex: 1;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.fw-replay-slider {
+  width: 100%;
+  margin-top: 8px;
+  accent-color: #ff2d23;
+}
+
+.fw-replay-ticks,
+.fw-replay-options,
+.fw-replay-key {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.fw-replay-options { margin-top: 6px; font-weight: 600; }
+.fw-replay-options label { display: flex; align-items: center; gap: 6px; }
+.fw-replay-options select { font: inherit; }
+.fw-replay-key { margin-top: 6px; justify-content: flex-start; gap: 16px; }
+
+.fw-replay-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+
+.fw-replay-dot.current { background: rgb(255, 45, 35); }
+.fw-replay-dot.trail { background: rgba(150, 20, 20, 0.6); }
+
+.fw-replay-note { margin-top: 6px; color: var(--text-secondary); }
+.fw-replay-error { margin-top: 6px; color: #ff8a80; font-weight: 600; }
+
+/* =============================================
    TREEKO CHAT BUTTON (treeko.js) — additive only
    ============================================= */
 /* Pill below the GFW API box: round avatar + green name. The avatar shows

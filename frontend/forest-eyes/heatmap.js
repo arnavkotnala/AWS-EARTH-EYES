@@ -672,7 +672,7 @@
       <span>Sensitivity</span>
       <input type="range" min="0" max="100" step="1" value="${Math.round(gainToSlider(CONFIG.gain))}" aria-label="Heatmap sensitivity">
     </label>
-    <div class="fw-heatmap-legend-note">Water is blue. Tree cover loss 2001–2024 (all years),
+    <div class="fw-heatmap-legend-note">Water is blue. Tree cover loss 2001–2023 (all years),
       UMD/Hansen via Global Forest Watch. Raise the sensitivity if it looks all green, lower it if large areas turn red.</div>`;
   document.body.appendChild(legend);
   // The slider fires dozens of 'input' events per second. Recolouring the map (SVG filter) is

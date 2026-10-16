@@ -154,8 +154,8 @@
     }
     if (ctx.weather) out.push(`Current weather: ${String(ctx.weather).slice(0, 200)}`);
     out.push(soil?.text
-      ? `Soil at the centre point (ISRIC SoilGrids 2.0, modelled 250 m estimates, means by depth):\n${soil.text}`
-      : 'Soil data: unavailable right now — say so if asked, and answer from general regional knowledge.');
+      ? `Soil at the centre point (${soil.source || 'ISRIC SoilGrids 2.0, modelled 250 m estimates, means by depth'}):\n${soil.text}`
+      : 'Soil data: could not be loaded for this place right now. If asked about soil, say so plainly; do NOT name a soil group or give texture, pH or other values for this place. You may say which properties a local soil test should check.');
     return out.join('\n');
   }
 
@@ -168,7 +168,7 @@
 
   HOW TO ANSWER
   - Always relate answers to the current place above. If no place is selected, answer briefly in general terms and suggest searching a place and clicking "Analyze Deforestation".
-  - Soil questions: base the soil profile on the SoilGrids data above (texture, pH, organic carbon, nitrogen, bulk density by depth; name the soil group). Explain what it means for tree growth. Say these are modelled estimates and recommend a local soil test for planting decisions. Never invent measurements.
+  - Soil questions: build the soil profile ONLY from the soil data above. Use the texture class exactly as given; mention a soil group, nitrogen or values by depth only if they appear in that data. Explain what it means for tree growth. Say these are modelled estimates and recommend a local soil test for planting decisions. Never invent measurements, soil groups or soil names.
   - Tree species: recommend species native to this region and suited to its soil and climate; give common and scientific names; warn against invasive species.
   - Where to plant: give 3-5 candidate sites in "sites", all within the analysis radius of the centre. Prefer degraded or recently cleared land, forest edges, riverbanks and slopes needing erosion control. Avoid water bodies, dense built-up areas, roads and protected core zones. Say in the answer that the sites are AI-suggested candidates to check on the satellite map and with landowners or the local forest department.
   - Use the deforestation figures above when relevant. Be honest when unsure.
@@ -205,7 +205,8 @@
     const ctx = context && isLat(+context.lat) && isLng(+context.lng)
       ? { ...context, lat: +context.lat, lng: +context.lng }
       : null;
-    const soil = ctx ? await getSoil(ctx.lat, ctx.lng, fetchImpl, opts.soilTimeoutMs) : null;
+    // opts.getSoil: the server's instant local grid (India), falling back to SoilGrids
+    const soil = ctx ? await (opts.getSoil ? opts.getSoil(ctx.lat, ctx.lng) : getSoil(ctx.lat, ctx.lng, fetchImpl, opts.soilTimeoutMs)) : null;
     const contents = toContents(messages);
     if (!contents.length || contents[contents.length - 1].role !== 'user') {
       throw httpError(400, 'Send a question from the user.');
@@ -216,7 +217,8 @@
     if (opts.generate) {
       // Server path: shared Gemma 4 client (retries + model fallback), see ../gemma.js
       ({ text, model: usedModel } = await opts.generate({
-        system: systemPrompt(ctx, soil), contents, schema: RESPONSE_SCHEMA, timeoutMs: opts.geminiTimeoutMs,
+        // JSON asked for in the prompt only: with the schema enforced Gemma loops (see gemma.js)
+        system: systemPrompt(ctx, soil), contents, schema: RESPONSE_SCHEMA, timeoutMs: opts.geminiTimeoutMs, jsonMode: 'prompt',
       }));
     } else {
       const body = JSON.stringify({
@@ -258,14 +260,18 @@
       }
     }
     let parsed;
+    const clean = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     try {
-      parsed = JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
+      parsed = JSON.parse(clean);
     } catch {
-      parsed = { answer: text, sites: [] }; // model ignored the schema: still show the text
+      // a sentence around the JSON object: parse the object itself
+      try { parsed = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1)); } catch {
+        parsed = { answer: text, sites: [] }; // model ignored the schema: still show the text
+      }
     }
     const { sites, removed } = checkSites(parsed.sites, ctx);
     const sources = [];
-    if (soil?.hasData) sources.push('Soil: ISRIC SoilGrids 2.0 (modelled, 250 m)');
+    if (soil?.hasData) sources.push(`Soil: ${soil.source || 'ISRIC SoilGrids 2.0 (modelled, 250 m)'}`);
     if (ctx?.analysis?.source === 'real') sources.push('Tree cover loss: Global Forest Watch');
     return { answer: String(parsed.answer || '').slice(0, 6000), sites, removedSites: removed, sources, model: usedModel };
   }

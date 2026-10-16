@@ -55,6 +55,7 @@ function askGemini(payload, fetchImpl = fetch) {
     fetchImpl,
     geminiTimeoutMs: CONFIG.geminiTimeoutMs,
     soilTimeoutMs: CONFIG.soilTimeoutMs,
+    getSoil: (lat, lng) => treekoSoil(lat, lng, fetchImpl),
     keyHint: 'GEMINI_API_KEY in the server settings',
     modelHint: 'Set GEMINI_MODEL in the server settings to a current model.',
   });
@@ -65,6 +66,31 @@ function getSoil(lat, lng, fetchImpl = fetch) {
 }
 
 const httpError = brain.httpError;
+
+// Treeko's soil: the local India grid answers in < 1 ms; the SoilGrids API often takes 30 s,
+// longer than Treeko can wait, so it is only the fallback outside India.
+const soilGrid = require('./soil.js');
+
+function localSoil(lat, lng) {
+  const s = soilGrid.lookup(lat, lng);
+  if (!s) return null;
+  const near = s.distanceKm ? ` (nearest cell with soil data, ${s.distanceKm} km away)` : '';
+  const val = (x, unit) => (x == null ? 'n/a' : `${x}${unit}`);
+  const text = [
+    `Topsoil 0-30 cm${near}:`,
+    `- Texture class (USDA): ${s.textureClass || 'n/a'} (clay ${val(s.clayPct, ' %')}, silt ${val(s.siltPct, ' %')}, sand ${val(s.sandPct, ' %')})`,
+    `- pH (water): ${val(s.pH, '')}`,
+    `- Organic carbon: ${val(s.organicCarbonGkg, ' g/kg')}`,
+    `- Bulk density: ${val(s.bulkDensity, ' g/cm³')}`,
+    `- Coarse fragments: ${val(s.coarseFragmentsPct, ' % by volume')}`,
+    'This grid has no soil group, nitrogen or deeper layers: do not state them.',
+  ].join('\n');
+  return { text, hasData: true, source: `${s.source}, modelled` };
+}
+
+function treekoSoil(lat, lng, fetchImpl = fetch) {
+  return localSoil(lat, lng) || brain.getSoil(lat, lng, fetchImpl, CONFIG.soilTimeoutMs);
+}
 
 // ---------------------------------------------------------------------------
 // GFW proxy — the browser never sees GFW_API_KEY
@@ -144,5 +170,5 @@ async function handleApi({ method, path, query = {}, body = '' }, fetchImpl = fe
 
 module.exports = {
   CONFIG, handleApi, askGemini, setGenerator, getSoil, summariseSoil, checkSites, systemPrompt, toContents,
-  haversineKm, soilCache, gfwGeostore, gfwQuery,
+  haversineKm, soilCache, gfwGeostore, gfwQuery, localSoil,
 };
