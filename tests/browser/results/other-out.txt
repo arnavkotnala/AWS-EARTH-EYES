@@ -1,0 +1,96 @@
+
+[s01] Shell: River tab  (5.0 s)
+   -> river selected=true, river frame visible=true
+
+[s02] Shell: Forest tab  (5.1 s)
+   -> forest selected=true, forest frame visible=true
+
+[s03] Shell: "T" keyboard shortcut  (4.9 s)
+   -> river selected=true
+
+[s04] Shell: Hazard Lens on  (6.0 s)
+   -> checked=true, lens frame visible=true
+
+[s05] Shell: Hazard Lens off  (2.9 s)
+   -> checked=false, lens frame visible=false
+
+[h06] Hazard preset "Joshimath, Chamoli (India)"  (3.0 s)
+   -> + − Leaflet | Imagery © Esri, Maxar, Earthstar Geographics 🛰️ Hazard Lens Click anywhere on Earth. Gemma 4 looks at the satellite image and live river, flood, terrain, rain and soil data, then explains the natural hazards there. ✦ Powered by Gemma 4 Go Joshim
+
+[h07] Hazard preset "Rhine at Cologne (Germany)"  (31.0 s)
+   -> EXCEPTION page.click: Timeout 30000ms exceeded.
+
+[h08] Hazard preset "Amazon near Manaus (Brazil)"  (17.8 s)
+   -> + − Leaflet | Imagery © Esri, Maxar, Earthstar Geographics 🛰️ Hazard Lens Click anywhere on Earth. Gemma 4 looks at the satellite image and live river, flood, terrain, rain and soil data, then explains the natural hazards there. ✦ Powered by Gemma 4 Go Joshim
+
+[h09] Hazard preset "Derna, Libya (2023 dam failure)"  (32.8 s)
+   -> + − Leaflet | Imagery © Esri, Maxar, Earthstar Geographics 🛰️ Hazard Lens Click anywhere on Earth. Gemma 4 looks at the satellite image and live river, flood, terrain, rain and soil data, then explains the natural hazards there. ✦ Powered by Gemma 4 Go Joshim
+
+[h10] Hazard preset "Sindh, Indus (Pakistan)"  (30.9 s)
+   -> EXCEPTION page.click: Timeout 30000ms exceeded.
+
+[h11] Hazard: search "Dehradun" + Go  (30.9 s)
+   -> EXCEPTION page.click: Timeout 30000ms exceeded.
+
+[h12] Hazard: tab data  (3.8 s)
+   -> aria-selected=true
+
+[h13] Hazard: tab reading  (2.5 s)
+   -> aria-selected=true
+
+[r14] River select (12 rivers) -> 2nd option  (0.9 s)
+   -> selected yamuna
+
+[r15] River select -> back to 1st  (0.9 s)
+   -> selected ganga
+
+[r16] City "Shimla" + 🔍  (0.9 s)
+   -> target 30.3165, 78.0322 (Dehradun)
+
+[r17] Sliders MW / radius  (0.9 s)
+   -> 1500 MW / 200 km
+
+[r18] Rank radio "nearest"  (0.9 s)
+   -> nearest checked=true
+
+[r19] Find Dam Sites for this City  (3.9 s)
+   -> panels:  | 2 site buttons
+
+[r20] Dam site result: first "satellite/fly" button  (0.9 s)
+   -> no site result buttons shown
+
+[r21] Dam site result: "review with Gemma" button  (0.9 s)
+   -> no site result buttons shown
+
+[r22] Scan the Ganga  (15.4 s)
+   -> panels: dam-planner-panel
+
+[r23] Pick a river on the map -> click map  (13.3 s)
+   -> button said "✖ Cancel picking (Esc)", now "✖ Cancel picking (Esc)"
+
+[r24] ⚡ Plan Dam Siting (MW)  (4.0 s)
+   -> panels: dam-planner-panel
+
+[r25] Close dam-planner-panel  (1.8 s)
+   -> panel visible after: false
+
+[r26] Close water-panel  (0.9 s)
+   -> panel not open
+
+[r27] Close geotech-panel  (1.0 s)
+   -> panel not open
+
+[r28] ✨ Aqua (Gemma 4) open  (2.6 s)
+   -> aqua input visible: true
+
+[r29] Aqua: ask a question (Enter)  (31.0 s)
+   -> 
+
+[r30] Aqua: close  (1.9 s)
+   -> aqua input visible: false
+
+[r31] Aqua pill (bottom) opens drawer  (2.6 s)
+   -> aqua input visible: true
+
+[r32] Leaflet layer checkboxes (each off/on)  (10.5 s)
+   -> toggled: Dark | Satellite | Major rivers ≥ 100,000 km² | Large rivers 20,000–100,000 km² | Medium rivers 2,000–20,000 km² | Small rivers & streams < 2,000 km² · India from 100

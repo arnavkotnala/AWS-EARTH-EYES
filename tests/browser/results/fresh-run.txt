@@ -1,0 +1,27 @@
+92/92 trees matched to the GBIF backbone; recorded = ≥3 records within the radius
+
+[fresh] Hyderabad (India, 30 km): app accepts 66/92 trees; 34 checked trees recorded nearby; recall 79% (27/34)
+   ✕ bahera (9 records, native) — water: Too dry: it needs at least 1000 mm a year, so it would depend on irrigation for life.
+   ✕ kadam (53 records, native) — water: Too dry: it needs at least 1300 mm a year, so it would depend on irrigation for life.
+   ✕ saptaparni (80 records, native) — water: Too dry: it needs at least 1100 mm a year, so it would depend on irrigation for life.
+   ✕ pink-poui (24 records, not-recorded) — water: Too dry: it needs at least 1250 mm a year, so it would depend on irrigation for life.
+   ✕ champa (12 records, native) — water: Too dry: it needs at least 2200 mm a year, so it would depend on irrigation for life. | soil: Soil is more alkaline than it tolerates.
+   ✕ pindrow-fir (5 records, not-recorded) — water: Too dry: it needs at least 1100 mm a year, so it would depend on irrigation for life.
+   ✕ horse-chestnut (5 records, not-recorded) — soil: Soil is more alkaline than it tolerates.
+[fresh] Lucknow (India, 30 km): app accepts 63/92 trees; 14 checked trees recorded nearby; recall 93% (13/14)
+   ✕ saptaparni (3 records, native) — water: Too dry: it needs at least 1100 mm a year, so it would depend on irrigation for life.
+[fresh] Ahmedabad (India, 30 km): app accepts 60/92 trees; 26 checked trees recorded nearby; recall 85% (22/26)
+   ✕ kadam (19 records, native) — water: Too dry: it needs at least 1300 mm a year, so it would depend on irrigation for life.
+   ✕ saptaparni (26 records, native) — water: Too dry: it needs at least 1100 mm a year, so it would depend on irrigation for life.
+   ✕ sandalwood (3 records, introduced) — water: Too dry: it needs at least 800 mm a year, so it would depend on irrigation for life.
+   ✕ pink-poui (3 records, not-recorded) — water: Too dry: it needs at least 1250 mm a year, so it would depend on irrigation for life.
+[fresh] Ranchi (India, 30 km): app accepts 73/92 trees; 6 checked trees recorded nearby; recall 83% (5/6)
+   ✕ champa (5 records, native) — water: Too dry: it needs at least 2200 mm a year, so it would depend on irrigation for life. | soil: Soil is more alkaline than it tolerates.
+[fresh] Thiruvananthapuram (India, 30 km): app accepts 66/92 trees; 33 checked trees recorded nearby; recall 91% (30/33)
+   ✕ arjun (31 records, native) — water: Too wet: more than 1800 mm a year, roots risk waterlogging.
+   ✕ gulmohar (3146 records, introduced) — water: Too wet: more than 1800 mm a year, roots risk waterlogging.
+   ✕ champa (112 records, native) — water: Too dry: it needs at least 2200 mm a year, so it would depend on irrigation for life.
+
+Recall, tuned places: —% (0/0)
+Recall, holdout places: —% (0/0)
+Recall, fresh places: 86% (97/113)

@@ -11,3 +11,6 @@ river-eyes chamoli/
 node_modules/
 .DS_Store
 __MACOSX/
+
+# browser test screenshots (large)
+tests/browser/shots/

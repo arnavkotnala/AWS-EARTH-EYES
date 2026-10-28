@@ -1,0 +1,35 @@
+
+[y01] Nav: Dam planner  (1.1 s)
+   -> dam panel true
+
+[y02] Nav: Geotech  (3.9 s)
+   -> geotech panel true: 🧪 Site Conditions: Soil, Earthquakes, Flow ✕ SITE Ganga (Ganges) (mid-river) Snapped to river 0 km away · 1,318 km to the sea 🌊 River flow Long-term mean (HydroRIVERS) 3,060 m³/s Today (GloFAS) 2,14
+
+[y03] Geotech: close ✕  (0.9 s)
+   -> geotech panel false
+
+[y04] Nav: Water quality  (0.9 s)
+   -> water panel true: 💧 Water Quality (Sentinel-2) ✕ Turbidity and algae (chlorophyll) of a river or lake, measured from the newest cloud-free Sentinel-2 satellite images. Gemma 4 explains what it sees. 📍 Ganga (Ganges) 
+
+[y05] Water: run (Sentinel-2 + Gemma reading)  (0.9 s)
+   -> 💧 Water Quality (Sentinel-2) ✕ Turbidity and algae (chlorophyll) of a river or lake, measured from the newest cloud-free Sentinel-2 satellite images. Gemma 4 explains what it sees. 📍 Ganga (Ganges) (mid-river) (25.348, 82.048) Click any river or lake on the map to choose another place. Analyse water quality here 🛰️ 
+
+[y06] Water: close ✕  (0.9 s)
+   -> water panel false
+
+[y07] Nav: Overview  (0.9 s)
+   -> panels open: dam false, water false, geotech false
+
+[y08] Pick a river: click exactly on the Ganga line  (14.1 s)
+   -> button now "🖱️ Pick a river on the map"; basin select = Ganga (Ganges) — Himalayan Basin; header: traced
+
+[y09] Aqua chip "800 MW Dam Plan"  (74.6 s)
+   -> Planning an optimal dam cascade for an 800 MW targeted capacity in the Garhwal Valley (Upper Ganga Basin, such as along the Bhagirathi or Alaknanda rivers) requires balancing power generation with severe hydrological and  [raw LaTeX left]
+
+[y10] Aqua chip "Site Investigation"  (35.1 s)
+   -> For a weir construction on an active river like the Ganga, foundation investigations are critical to ensure structural stability against heavy hydraulic loads, scouring, and seepage. Since the Ganga basin is characterize
+
+[y11] Aqua chip "Water Quality WQI"  (71.2 s)
+   -> 🌊 Aqua Hydrological Intelligence Telemetry verified against Central Water Commission (CWC) stage gauges and CPCB water quality indices.
+   ! HTTP 502 /api/v1/aqua/chat
+   ! console: Failed to load resource: the server responded with a status of 502 (Bad Gateway)

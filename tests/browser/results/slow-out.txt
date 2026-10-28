@@ -1,0 +1,36 @@
+
+[x01] Hazard preset Joshimath -> wait for the reading  (65.2 s)
+   -> an) ✦ Reading 📊 Data only Reading from the data JOSHIMATH, CHAMOLI (INDIA) OVERALL: HIGH Rule-based screening: landslide concern is high based on the numbers alone. 64 s · AI error: Gemma 4 could not answer right now. Please try again. ↻ Retry with Gemma 4 HAZARDS ⛰️ Landslide HIGH Seen in image: Not analysed: rule-based reading cannot interpret images. Data: Steepest slope ~26.2° and 892 m relie
+
+[x02] Hazard: next preset (Rhine) is clickable after the reading  (36.2 s)
+   -> an) ✦ Reading 📊 Data only ✦ Gemma 4 reading · gemma-4-26b-a4b-it via Google AI Studio RHINE AT COLOGNE (GERMANY) OVERALL: LOW The Rhine river is flowing at a low level relative to its seasonal normal and 2-year flood levels. 35 s HAZARDS 🌊 Flood LOW Seen in image: The river lev
+
+[x03] Hazard: search "Dehradun" + Go  (1.2 s)
+   -> an) ✦ Reading 📊 Data only ✦ Gemma 4 reading · gemma-4-26b-a4b-it via Google AI Studio RHINE AT COLOGNE (GERMANY) OVERALL: LOW The Rhine river is flowing at a low level relative to its seasonal normal and 2-year flood levels. 35 s HAZARDS 🌊 Flood LOW Seen in image: The river lev
+
+[x04] Find Dam Sites for this City (Dehradun) -> wait for sites  (43.1 s)
+   -> 1 sites listed
+
+[x05] Dam site: satellite / fly-to button  (5.2 s)
+   -> clicked "📍 Inspect on satellite"
+
+[x06] Dam site: review with Gemma button  (18.1 s)
+   -> Site 1 · score 75/100 300 MW Potential 969.3 MW, 300 MW needed · Head 170 m over 7.4 km · Flow 682.3 m³/s · Weir crest ≈ 150 m 141 km to Dehradun · Soil: Loam (stones 18.7%, clay 21.4%) · 3 M5+ quakes ≤50 km since 1970 Power 35% 98 Narrow gorge 20% 93 Near city 20% 30 Soil / foundation 15% 59 Few ea
+
+[x07] Aqua in the UI: formula question  (30.2 s)
+   -> To calculate the potential power output for a dam, the following formula is used: * Formula: P = ρ · g · Q · H · η * Variables: * P = Power (Watts) * ρ = Density of water (approximately 1000 kg/m³) * g = Acceleration due to gravity (approximately 9.81 m/s²) * Q = Flow rate (100 m³/s) * H = Head (50 
+
+[x08] Aqua in the UI: code request is refused  (1.2 s)
+   -> I'm Aqua, and I only help with rivers, water, floods and dam siting in River Eyes. I don't write program code. Ask me something like "How much power could a 50 m head dam give here?"
+
+[x09] Treeko: "Where can we plant trees?" for Dehradun -> site buttons  (14.6 s)
+   -> 3 sites with map buttons
+
+[x10] Treeko site: "map" button  (4.4 s)
+   -> clicked; status: 🌳 Forest Eyes Deforestation Intelligence Platform Location found — click Analyze
+
+[x11] Treeko site: "copy" button  (2.4 s)
+   -> clipboard: 30.35210, 78.02540
+
+[x12] Treeko in the UI: code request is refused  (5.4 s)
+   -> I'm Treeko, and I only help with trees, forests, soil, land and climate for the place you picked in Forest Eyes. I don't write program code. Ask me something like "Which native trees suit this place?" or "Where could we plant here?"

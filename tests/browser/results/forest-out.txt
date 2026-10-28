@@ -1,0 +1,108 @@
+
+[f01] Search by name "Dehradun" + 🔍  (3.9 s)
+   -> lat=30.325565 lon=78.043681
+
+[f02] Search by name via Enter key ("Shimla")  (1.5 s)
+   -> lat=31.104039 lon=77.170792
+
+[f03] Coordinates 30.3165, 78.0322 + 🔍  (1.6 s)
+   -> lat=30.3165 lon=78.0322, prefixes N/E
+
+[f04] Radius slider -> 25 km  (1.6 s)
+   -> display: 25 km
+
+[f05] Analyze Deforestation  (26.5 s)
+   -> 🌲 DEFORESTATION ANALYSIS 🛰️ Generating area polygon... 📡 Submitting to analytics engine... ⏳ Processing satellite data... ✅ Formatting results... 🌡️ AUTONOMOUS CLIMATE ENGINE Real-time environmental indicators at analyzed location Climate data will appear after analysis.
+   ! HTTP 500 /api/gfw/extent?bbox=77.92784,30.22641,78.13656,30.40659
+   ! console: Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+
+[f06] Layer toggle #toggle-satellite (off/on)  (5.2 s)
+   -> checked true -> false -> true
+
+[f07] Layer toggle #toggle-tree-cover (off/on)  (4.8 s)
+   -> checked true -> false -> true
+
+[f08] Layer toggle #toggle-tree-loss (off/on)  (4.8 s)
+   -> checked true -> false -> true
+
+[f09] Layer toggle #toggle-glad (off/on)  (4.7 s)
+   -> checked false -> true -> false
+
+[f10] Tree Loss Form = dots  (6.6 s)
+   -> selected dots
+
+[f11] Tree Loss Form = color  (7.6 s)
+   -> selected color
+   ! FAILED net::ERR_ABORTED /api/gfw/extent?bbox=77.92784,30.22641,78.13656,30.40659
+
+[f12] Tree Loss Form = heatmap  (6.5 s)
+   -> selected heatmap
+
+[f13] Tree Loss Form = replay  (6.5 s)
+   -> selected replay
+
+[f14] 🌱 Which Trees Can Grow Here? (open planner)  (4.7 s)
+   -> 63 trees listed; place: 📍 30.3165, 78.0322; site: 💧 Rainfall mm/yr 🌡️ Temperature 10.9 – 27.7 °C monthly means ❄️ Winter low 0.8 °C record -0.3 ☀️ Sunshine 7.7 h/day 🪨 Soil Loam, pH 6.4 💨 Air Poor for trees
+
+[f15] Planner: switch on first tree -> report  (1.5 s)
+   -> Indian gooseberry · Amla Phyllanthus emblica · Euphorbiaceae · native to Assam, Bangladesh, Borneo, Cambodia, China South-Central and 16 more (native here) Check This place The tree needs ✓ 💧 Water 1734 mm/yr 1500–2500 mm/yr ideal (survives 700–4200) Rainfall is in its range. ✓ 🪨 Soil pH 6.4, loam
+
+[f16] Planner: switch on a different tree (one at a time)  (3.0 s)
+   -> switched on: utis; report: Nepalese alder · Utis Alnus nepalensis · Betulaceae · native to Assam, Bangladesh, China South-Central, Tibet, East Himalaya and 5 more (native here) Check This
+
+[f17] Planner: switch the tree off  (2.5 s)
+   -> switched on now: none
+
+[f18] Planner: rainfall -> 500 mm  (2.9 s)
+   -> trees 63 -> 43; reset link: use the data (1734 mm)
+
+[f19] Planner: "use the data" reset link  (2.4 s)
+   -> rain=1734, trees 63, reset link present: false
+
+[f20] Planner: close ✕  (1.9 s)
+   -> planner visible: false; plant-btn aria-expanded=false
+
+[f21] Planner: reopen + Escape closes  (1.9 s)
+   -> planner visible after Escape: false
+
+[f22] TREEKO pill (open chat)  (1.1 s)
+   -> chat open; chips: What is the soil profile? | Type of trees to be planted | Where can we plant trees?
+
+[f23] Treeko: quick-question chip  (51.0 s)
+   -> messages 1 -> 3; last: Based on the modelled estimates for the centre point (30.3165, 78.0322), the topsoil profile (0-30 cm) is as follows: Texture class: Loam (clay 26.7%, silt 40.9%, sand 32.4%) pH (water): 6.4 Organic carbon: 23.8 g/kg Bulk density: 1.31 g/cm³ Coarse fragments: 
+
+[f24] Treeko: type a question + Send  (51.1 s)
+   -> last: Looking at the data for this area (30.3165, 78.0322), the deforestation rate is currently LOW. The annual deforestation rate is approximately 0.02% per year, which falls well below the mid-range threshold. However, it is important to note some recent trends in
+
+[f25] Treeko: answer action [data-act=map]  (1.0 s)
+   -> no such button shown
+
+[f26] Treeko: answer action [data-act=copy]  (1.0 s)
+   -> no such button shown
+
+[f27] Treeko: close ✕  (1.8 s)
+   -> chat input visible: false
+
+[f28] Leaflet + / − zoom  (3.5 s)
+   -> zoom 9 -> 10 -> 9
+
+[f29] Zoom far out -> 3D globe opens  (221.9 s)
+   -> globe visible: true
+
+[f30] Globe control #globe-zoom-in  (3.0 s)
+   -> aria-pressed=null
+
+[f31] Globe control #globe-zoom-out  (3.1 s)
+   -> aria-pressed=null
+
+[f32] Globe control #globe-spin  (3.1 s)
+   -> aria-pressed=false
+
+[f33] Globe control #globe-spin  (3.0 s)
+   -> aria-pressed=true
+
+[f34] Globe control #globe-reset  (3.0 s)
+   -> aria-pressed=null
+
+[f35] Globe: zoom in a lot -> back to flat map  (161.3 s)
+   -> globe visible: false, leaflet visible: true
