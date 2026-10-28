@@ -220,6 +220,8 @@ async function callGemini(model, contents, schema, apiKey, timeoutMs, fetchImpl,
   if (model.startsWith('gemini')) {
     body.generationConfig = { ...body.generationConfig, thinkingConfig: { thinkingLevel: 'minimal' } };
   }
+  // Every answer is capped (Aqua had no cap): long essays cost quota and are never needed here
+  body.generationConfig = { maxOutputTokens: 4096, ...body.generationConfig };
   const res = await fetchImpl(GEMINI_API + encodeURIComponent(model) + ':generateContent', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },

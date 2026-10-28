@@ -323,9 +323,18 @@ async function geocodeLocation(query) {
 }
 
 $searchBtn.addEventListener('click', doSearch);
-$locationSearch.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+$locationSearch.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doSearch();
+  if (e.key === 'Escape') $searchSuggestions.classList.add('hidden');
+});
 
 let suggestionTimer = null;
+let searchCount = 0; // suggestions loaded before the latest search are stale
+function closeSuggestions() {
+  clearTimeout(suggestionTimer);
+  searchCount++;
+  $searchSuggestions.classList.add('hidden');
+}
 $locationSearch.addEventListener('input', () => {
   clearTimeout(suggestionTimer);
   const query = $locationSearch.value.trim();
@@ -343,10 +352,13 @@ document.addEventListener('click', (e) => {
 });
 
 async function loadSearchSuggestions(query) {
+  const startedAt = searchCount;
   try {
     const url = `${APIS.NOMINATIM}/search?q=${encodeURIComponent(query)}&format=json&limit=5`;
     const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
     const places = await res.json();
+    // A search ran (or the text changed) while this was loading: these suggestions are stale
+    if (searchCount !== startedAt || $locationSearch.value.trim() !== query) return;
     $searchSuggestions.innerHTML = '';
     places.forEach(place => {
       const item = document.createElement('button');
@@ -369,6 +381,7 @@ async function loadSearchSuggestions(query) {
 async function doSearch() {
   const query = $locationSearch.value.trim();
   if (!query) return;
+  closeSuggestions(); // else a pending suggestion list opens over the coordinate boxes
   setStatus('loading', 'Searching location...');
   try {
     const { lat, lng, name } = await geocodeLocation(query);
@@ -468,6 +481,11 @@ async function analyzeLocation(lat, lng) {
     setStep(0);
     const geojson = createBoundingBoxGeoJSON(lat, lng, radiusKm);
     drawPolygon(geojson);
+    // Tree cover in 2000 in the same box (denominator of the deforestation rate), fetched alongside
+    const extentJob = fetchForestExtent(geojson).catch(err => {
+      console.warn('[API] Forest extent unavailable:', err.message);
+      return null;
+    });
     await delay(400);
 
     let analyticsData = null;
@@ -506,6 +524,9 @@ async function analyzeLocation(lat, lng) {
 
     const formatted = formatAnalyticsResponse(analyticsData);
     formatted.areaKm2 = (2 * radiusKm) ** 2; // the analysis box is 2r × 2r
+    const extent = await extentJob;
+    formatted.forestHa2000 = extent ? extent.forestHa : null;
+    formatted.forestCoverPct = extent ? extent.coverPct : null;
     latestApiUpdatedAt = analyticsData?.updatedAt || null;
 
     // ---- CACHE WRITE (strict isolation) ----
@@ -567,6 +588,15 @@ function createBoundingBoxGeoJSON(lat, lng, radiusKm) {
       properties: {},
     }],
   };
+}
+
+/** Hectares of tree cover (≥30 % canopy, year 2000) in the analysis box, counted by our server. */
+async function fetchForestExtent(geojson) {
+  const ring = geojson.features[0].geometry.coordinates[0];
+  const bbox = [ring[0][0], ring[0][1], ring[2][0], ring[2][1]].map(v => v.toFixed(5)).join(',');
+  const res = await fetch(`${API_BASE}/api/gfw/extent?bbox=${bbox}`, { signal: AbortSignal.timeout(60000) });
+  if (!res.ok) throw new Error(`Forest extent failed: ${res.status}`);
+  return res.json();
 }
 
 function drawPolygon(geojson) {
@@ -722,10 +752,59 @@ function formatAnalyticsResponse(data) {
 // =============================================
 // SEVERITY ENGINE
 // =============================================
-// Thresholds are for the default 20 × 20 km box (10 km radius, 400 km²); other box sizes are scaled
-// to it, so a 50 km radius (10,000 km²) needs 25× more loss for the same rating.
-function getSeverityLevel(totalHa, areaKm2 = 400) {
-  totalHa = totalHa * (400 / Math.max(1, areaKm2));
+// Rated on the annual deforestation rate: the share of the year-2000 forest (≥30 % canopy) lost
+// per year, compound form (Puyravaud 2003): r = 100 / t × ln(A2000 / (A2000 − loss)).
+//   Low < 0.3 %/yr · Mid 0.3–1.0 · High 1.0–2.0 · Very high > 2.0
+const LOSS_FIRST_YEAR = 2001;
+const RATE_LEVELS = [
+  { above: 2.0, level: 'VERY HIGH DEFORESTATION', color: 'red', icon: '🔴',
+    desc: 'Forest is disappearing faster than 2 % a year. Immediate intervention required to prevent further ecosystem collapse.' },
+  { above: 1.0, level: 'HIGH DEFORESTATION', color: 'orange', icon: '🟠',
+    desc: 'Forest is being lost at 1–2 % a year. Protection and targeted reforestation are urgently needed.' },
+  { above: 0.3, level: 'MID DEFORESTATION', color: 'yellow', icon: '🟡',
+    desc: 'Forest is being lost at 0.3–1 % a year. Monitoring and reforestation recommended.' },
+  { above: -Infinity, level: 'LOW DEFORESTATION', color: 'green', icon: '🟢',
+    desc: 'Forest loss is below 0.3 % a year. This area appears well-preserved; keep monitoring.' },
+];
+const MIN_FOREST_HA = 10; // less tree cover than this in 2000: a rate would be meaningless
+
+/** % of the year-2000 forest lost per year, or null when the forest area is unknown or ~0. */
+function annualDeforestationRate({ rows = [], totalHa = 0, forestHa2000 } = {}) {
+  if (!(forestHa2000 >= MIN_FOREST_HA)) return null;
+  // Both loss sources cover 2001–2024; years without loss may be missing from the rows
+  const lastYear = Math.max(2024, ...rows.map(r => r.year));
+  const years = lastYear - LOSS_FIRST_YEAR + 1;
+  // Pixel-counted forest can come out a little below the loss total: keep the log finite
+  const remaining = Math.max(forestHa2000 - totalHa, forestHa2000 * 0.01);
+  return (100 / years) * Math.log(forestHa2000 / remaining);
+}
+
+/** @param {object} data — formatAnalyticsResponse() result plus forestHa2000 / areaKm2 */
+function getSeverityLevel(data) {
+  const rate = annualDeforestationRate(data);
+  if (rate !== null) {
+    const band = RATE_LEVELS.find(b => rate > b.above);
+    return { ...band, rate };
+  }
+  if (data?.forestHa2000 != null && data.forestHa2000 < MIN_FOREST_HA) return {
+    level: 'NO FOREST TO RATE',
+    color: 'green',
+    icon: '🟢',
+    rate: null,
+    desc: 'There was almost no tree cover (≥30 % canopy) here in 2000, so a deforestation rate cannot be measured.',
+  };
+  return ratingByHectares(data?.totalHa || 0, data?.areaKm2);
+}
+
+// Fallback, only when the forest area could not be loaded: the old hectare rule. Thresholds are for
+// the default 20 × 20 km box (10 km radius, 400 km²); other box sizes are scaled to it.
+function ratingByHectares(totalHa, areaKm2 = 400) {
+  const note = ' (Rated by hectares lost: forest area unavailable.)';
+  const level = ratingByHectaresBase(totalHa * (400 / Math.max(1, areaKm2)));
+  return { ...level, rate: null, desc: level.desc + note };
+}
+
+function ratingByHectaresBase(totalHa) {
   if (totalHa > 100) return {
     level: 'VERY HIGH DEFORESTATION',
     color: 'red',
@@ -769,7 +848,7 @@ function calculateTreesNeeded(totalEmissions, totalHa) {
 // =============================================
 function renderDeforestationResults(lat, lng, locationName, data, source) {
   const { rows, totalHa, totalEmissions, treesNeeded } = data;
-  const severity = getSeverityLevel(totalHa, data.areaKm2);
+  const severity = getSeverityLevel(data);
 
   $resultLocationName.textContent = `📍 ${locationName}`;
 
@@ -788,6 +867,7 @@ function renderDeforestationResults(lat, lng, locationName, data, source) {
   $severityIcon.textContent = severity.icon;
   $severityLevel.textContent = severity.level;
   $severityDesc.textContent = severity.desc;
+  renderSeverityRate(severity, data);
   window.ForestTreeko?.setSeverity(severity.color); // [treeko] picture follows the result; no-op if treeko.js is missing
 
   $statHa.textContent    = formatNumber(totalHa, 1);
@@ -806,6 +886,27 @@ function renderDeforestationResults(lat, lng, locationName, data, source) {
 
   $loadingState.classList.add('hidden');
   $resultContent.classList.remove('hidden');
+}
+
+/** The rate behind the rating, the forest it is measured against, and the scale. */
+function renderSeverityRate(severity, data) {
+  const $rate = $('severity-rate');
+  if (!$rate) return;
+  const scale = RATE_LEVELS.slice().reverse().map(b => {
+    const range = { green: '< 0.3', yellow: '0.3–1', orange: '1–2', red: '> 2' }[b.color];
+    return `<span class="rate-step ${b.color}${b.color === severity.color ? ' active' : ''}">${range}</span>`;
+  }).join('');
+  if (severity.rate === null) {
+    $rate.innerHTML = data.forestHa2000 != null
+      ? `Tree cover in 2000: <strong>${formatNumber(data.forestHa2000, 0)} ha</strong> (${data.forestCoverPct} % of the box)`
+      : 'Annual rate unavailable: the forest area did not load.';
+    return;
+  }
+  $rate.innerHTML = `
+    <div class="rate-line">Annual deforestation rate <strong>${severity.rate.toFixed(2)} %/yr</strong></div>
+    <div class="rate-scale" aria-label="Scale in % per year: low, mid, high, very high">${scale}</div>
+    <div class="rate-base">${formatNumber(data.totalHa, 0)} ha lost of ${formatNumber(data.forestHa2000, 0)} ha tree cover in 2000
+      (${data.forestCoverPct} % of the box, ≥30 % canopy), ${LOSS_FIRST_YEAR}–${Math.max(2024, ...data.rows.map(r => r.year))}.</div>`;
 }
 
 // =============================================
@@ -1324,6 +1425,11 @@ function updatePrefixes() {
 
 $latInput.addEventListener('input', updatePrefixes);
 $lngInput.addEventListener('input', updatePrefixes);
+// Typed coordinates are a new place: drop the searched name (else the analysis keeps the old label)
+[$latInput, $lngInput].forEach(el => el.addEventListener('input', () => {
+  lastName = null;
+  $locationSearch.value = '';
+}));
 
 const coordsSearchBtn = document.getElementById('coords-search-btn');
 if (coordsSearchBtn) {

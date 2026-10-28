@@ -216,6 +216,12 @@
         if (e.data && e.data.type === 'SWITCH_PLATFORM_MODE') {
           switchMode(e.data.mode);
         }
+        // A pop-up inside an app (Forest Eyes tree planner) blurs only its own frame: hide the switch above it
+        if (e.origin === location.origin && e.data && e.data.type === 'APP_MODAL') {
+          const sw = document.getElementById('mode-switch');
+          sw.style.visibility = e.data.open ? 'hidden' : '';
+          sw.toggleAttribute('inert', !!e.data.open);
+        }
       });
     })();
   </script>

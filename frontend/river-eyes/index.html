@@ -1077,7 +1077,7 @@
         <h3>🌊 Welcome to Aqua Terminal</h3>
         I am <strong>Aqua</strong>, your Gemma 4-powered River Eyes hydrology assistant. Ask about:
         <ul style="margin-left: 16px; margin-top: 6px;">
-          <li>Target power capacity to dam sizing ($P = \eta \cdot \rho \cdot g \cdot Q \cdot H$)</li>
+          <li>Target power capacity to dam sizing (P = η · ρ · g · Q · H)</li>
           <li>Soil, foundations and what site investigations are needed</li>
           <li>River water quality, CPCB standards, and flood stages</li>
         </ul>
@@ -2205,7 +2205,7 @@
           }
         } else {
           const err = await res.json().catch(() => ({}));
-          appendChatMessage(formatMarkdown('*Reference notes:*'), 'aqua');
+          if (res.status === 429) return appendChatMessage(formatMarkdown(err.error || 'Too many questions. Please wait a few minutes.'), 'aqua');
           appendFallbackAquaAnswer(text);
         }
       } catch (err) {
@@ -2215,7 +2215,9 @@
       }
     }
 
+    // Shown when the AI did not answer: says so, and gives general notes only (nothing about this river)
     function appendFallbackAquaAnswer(query) {
+      appendChatMessage(formatMarkdown('*Gemma 4 could not answer right now (the free AI service may be busy). Please try again in a minute. General notes, not specific to this river:*'), 'aqua');
       const q = query.toLowerCase();
       let answer = '';
 
@@ -2231,8 +2233,8 @@ $$P = \\frac{\\eta \\cdot \\rho \\cdot g \\cdot Q \\cdot H}{10^6}$$
 * **Bearing Capacity ($q_u$)**: Evaluated from ISRIC SoilGrids. Rock flanks (> 400 kPa) support concrete gravity dams.
 * **Bedrock Depth**: Deep alluvium (> 20m) requires positive cut-off diaphragm walls or earth-fill rockfill embankments.`;
       } else {
-        answer = `### 🌊 Aqua Hydrological Intelligence
-Telemetry verified against Central Water Commission (CWC) stage gauges and CPCB water quality indices.`;
+        answer = `### 🌊 Aqua
+River Eyes can help with dam siting (power in MW), soil and foundations, floods and water quality. For live numbers, use the Water Quality and Site Conditions panels.`;
       }
 
       appendChatMessage(formatMarkdown(answer), 'aqua');
@@ -2250,12 +2252,26 @@ Telemetry verified against Central Water Commission (CWC) stage gauges and CPCB 
 
     function formatMarkdown(text) {
       if (!text) return '';
-      return text
+      return plainMath(text)
+        // escape first: answers come from the model and must never become live HTML
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/### (.*?)\n/g, '<h3>$1</h3>')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
         .replace(/\n\n/g, '<br/><br/>')
         .replace(/\n/g, '<br/>');
+    }
+
+    // The chat has no LaTeX renderer: turn the model's $…$ formulas into plain symbols
+    function plainMath(text) {
+      const SYMBOLS = { cdot: '·', times: '×', eta: 'η', rho: 'ρ', approx: '≈', Delta: 'Δ', mu: 'μ', pi: 'π', le: '≤', ge: '≥', leq: '≤', geq: '≥', sigma: 'σ', alpha: 'α', beta: 'β', gamma: 'γ', theta: 'θ', lambda: 'λ' };
+      return text.replace(/\$\$?([^$]+?)\$\$?/g, (whole, m) => !/[\\^_=]/.test(m) && !/^\s*[A-Za-z]\w{0,3}\s*$/.test(m) ? whole : m // "$5 … $10" is money; "$Q$" is maths
+        .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1) / ($2)')
+        .replace(/\\(?:text|mathrm|mathbf)\{([^{}]*)\}/g, '$1')
+        .replace(/\\([A-Za-z]+)/g, (s, name) => SYMBOLS[name] ?? name)
+        .replace(/\^\{([^{}]*)\}/g, '^$1')
+        .replace(/[{}]/g, '')
+        .replace(/\s+/g, ' ').trim());
     }
 
     // Initialize application on page load

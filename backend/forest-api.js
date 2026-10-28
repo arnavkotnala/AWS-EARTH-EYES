@@ -7,6 +7,7 @@
  *   POST /api/treeko        Treeko chat (Gemini + ISRIC SoilGrids)
  *   POST /api/gfw/geostore  Create an analysis area      (adds the GFW key server-side)
  *   GET  /api/gfw/query     Query tree cover loss data   (adds the GFW key server-side)
+ *   GET  /api/gfw/extent    Tree cover 2000 in a box     (counted from GFW map tiles, no key)
  *   GET  /api/health        Status (never reveals keys)
  *
  * Secrets come from environment variables (Lambda configuration or a local .env):
@@ -70,6 +71,8 @@ const httpError = brain.httpError;
 // Treeko's soil: the local India grid answers in < 1 ms; the SoilGrids API often takes 30 s,
 // longer than Treeko can wait, so it is only the fallback outside India.
 const soilGrid = require('./soil.js');
+// Tree cover in 2000 inside the analysis box: the denominator of the deforestation rate
+const forestExtent = require('./forest-extent.js');
 
 function localSoil(lat, lng) {
   const s = soilGrid.lookup(lat, lng);
@@ -156,6 +159,10 @@ async function handleApi({ method, path, query = {}, body = '' }, fetchImpl = fe
     if (route === '/api/gfw/query') {
       if (method !== 'GET') throw httpError(405, 'Use GET.');
       return await gfwQuery(query, fetchImpl);
+    }
+    if (route === '/api/gfw/extent') {
+      if (method !== 'GET') throw httpError(405, 'Use GET.');
+      return { status: 200, json: await forestExtent.extent(query) };
     }
     throw httpError(404, 'Not found.');
   } catch (err) {

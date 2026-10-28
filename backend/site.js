@@ -18,7 +18,7 @@ const hazard = require('./hazard.js');
 const soilIndia = require('./soil.js');
 
 const SOILGRIDS = 'https://rest.isric.org/soilgrids/v2.0';
-const SOIL_PROPS = ['clay', 'sand', 'silt', 'cfvo', 'bdod', 'soc'];
+const SOIL_PROPS = ['clay', 'sand', 'silt', 'cfvo', 'bdod', 'soc', 'phh2o'];
 const SOIL_DEPTHS = ['0-5cm', '5-15cm', '15-30cm'];
 const QUAKE_RADIUS_KM = 150;
 const QUAKE_MIN_MAG = 5;
@@ -75,6 +75,8 @@ async function soil(lat, lon) {
         coarseFragmentsPct: out.cfvo ?? null,       // cm3/dm3 → vol % (d_factor 10)
         bulkDensity: out.bdod ?? null,              // kg/dm3
         organicCarbonGkg: out.soc ?? null,          // g/kg
+        pH: out.phh2o ?? null,                      // pH × 10 → pH (d_factor 10)
+        textureClass: soilIndia.textureClass(out.clay, out.silt, out.sand),
       };
     });
     job.catch(() => soilCache.delete(key));
@@ -158,4 +160,4 @@ async function assess({ lat, lon }) {
   };
 }
 
-module.exports = { assess };
+module.exports = { assess, soil };

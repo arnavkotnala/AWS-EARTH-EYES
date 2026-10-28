@@ -92,7 +92,8 @@
     }
     if (!entry) return null;
     const f = entry.formatted || {};
-    const severity = typeof getSeverityLevel === 'function' ? getSeverityLevel(f.totalHa || 0).level : '';
+    const rating = typeof getSeverityLevel === 'function' ? getSeverityLevel(f) : null;
+    const severity = rating?.level || '';
     return {
       name: entry.locationName,
       lat: entry.lat,
@@ -104,6 +105,8 @@
         totalHa: +(f.totalHa || 0).toFixed(2),
         totalEmissionsT: Math.round(f.totalEmissions || 0),
         treesNeeded: f.treesNeeded ?? null,
+        annualRatePct: rating?.rate != null ? +rating.rate.toFixed(2) : null,
+        forestHa2000: f.forestHa2000 ?? null,
         yearly: (f.rows || []).map(r => ({ year: r.year, ha: +(+r.ha).toFixed(2) })),
       },
       weather: weatherText(),

@@ -9,7 +9,7 @@
 frontend/                 everything the browser loads (served as-is)
   index.html              shell: Forest ⇄ River switch, Hazard Lens toggle, transition animation
   transition.css/.js      the water / forest transition
-  forest-eyes/            Forest Eyes app (map, 3D globe, Treeko assistant)
+  forest-eyes/            Forest Eyes app (map, 3D globe, Treeko assistant, "Which trees can grow here?" planner)
   river-eyes/             River Eyes app (river network, site conditions, water quality, City Power Planner, River Dam Atlas)
   hazard/                 Hazard Lens page
 backend/                  Node.js server, no npm packages needed (Node 22+)
@@ -24,7 +24,12 @@ backend/                  Node.js server, no npm packages needed (Node 22+)
   soil.js                 instant India soil lookups (SoilGrids grid)
   elevation.js            elevation from AWS Terrain Tiles
   forest-api.js           Forest Eyes API: Treeko chat + Global Forest Watch proxy
-  data/                   river network (HydroRIVERS) and India soil grid (SoilGrids), prebuilt
+  forest-extent.js        tree cover in 2000 inside the analysis box (for the annual deforestation rate)
+  trees.js                Forest Eyes tree planner: climate (ERA5), soil, air (CAMS) and per-tree reports
+  tree-traits.js          team-sourced tree data (data/tree-traits/): validation and merge
+  tdwg.js                 botanical region of a point, for Kew's native / introduced records
+  rainfall.js             long-term annual rainfall (CHPclim grid, data/rain_chpclim.bin)
+  data/                   river network (HydroRIVERS), India soil grid (SoilGrids) and tree requirements (FAO ECOCROP), prebuilt
   datasets/               real data exports for the demo places (CSV) + sources and licences
   scripts/                rebuild data/ and datasets/ from the original sources
 ```
@@ -56,6 +61,8 @@ Open http://localhost:8080 — useful links: `#river` (opens River Eyes), `#lens
 HydroRIVERS / HydroSHEDS (Lehner & Grill 2013) · GloFAS v4 via Open-Meteo · ISRIC SoilGrids 2.0 ·
 ESA Sentinel-2 (Microsoft Planetary Computer) · JRC Global Surface Water (Pekel et al. 2016) ·
 UMD / Hansen tree cover loss via Global Forest Watch / Global Nature Watch · USGS earthquake catalogue ·
-AWS Terrain Tiles · Esri World Imagery · Open-Meteo weather. Details and citations: `backend/datasets/README.md`.
+AWS Terrain Tiles · Esri World Imagery · Open-Meteo weather · ERA5 reanalysis · CHPclim rainfall · CAMS air quality ·
+Kew WCVP native ranges ·
+FAO ECOCROP tree requirements (via Recocrop) · UNECE critical levels for vegetation. Details and citations: `backend/datasets/README.md`.
 
 All results are screening estimates, not engineering or official hazard assessments.

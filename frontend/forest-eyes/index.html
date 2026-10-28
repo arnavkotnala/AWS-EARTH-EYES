@@ -68,6 +68,11 @@
         <span class="btn-icon-left">🛰️</span>
         Analyze Deforestation
       </button>
+      <!-- [tree-planner] which trees suit the searched place: water, soil, sunlight, air, climate (tree-planner.js) -->
+      <button type="button" class="btn-plant" id="plant-btn" aria-haspopup="dialog" aria-expanded="false">
+        <span class="btn-icon-left">🌱</span>
+        Which Trees Can Grow Here?
+      </button>
       <div class="data-source-toggle" hidden style="display: none;"><!-- hidden: live data is always used; the radios stay so app.js can read the mode -->
         <div class="data-source-label">📡 Data Source</div>
         <div class="toggle-group">
@@ -117,6 +122,8 @@
             <div class="severity-desc" id="severity-desc"></div>
           </div>
         </div>
+        <!-- annual deforestation rate behind the rating (app.js renderSeverityRate) -->
+        <div class="severity-rate" id="severity-rate"></div>
         <div class="stats-grid">
           <div class="stat-box">
             <div class="stat-value" id="stat-ha">—</div>
@@ -257,8 +264,11 @@
   <script src="globe-imagery.js"></script>
   <script src="globe-zoom.js"></script>
   <script src="treeko.js"></script>
+  <script src="ai-guard.js"></script>
   <script src="treeko-brain.js"></script>
   <script src="treeko-chat.js"></script>
+  <script src="tree-fit.js"></script>
+  <script src="tree-planner.js"></script>
 
   </body>
 </html>
